@@ -1,0 +1,22 @@
+{
+  "name": "visink",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "npm run dev -w @visink/app",
+    "build": "npm run build -w @visink/app",
+    "test": "vitest run",
+    "typecheck": "tsc -p packages/app --noEmit",
+    "demo": "vite-node scripts/make-demo.ts",
+    "desktop:dev": "npm run dev -w @visink/desktop",
+    "desktop:build": "npm run build -w @visink/desktop"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.12.4",
+    "typescript": "5.6.3",
+    "vitest": "2.1.8"
+  }
+}

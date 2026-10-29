@@ -1,0 +1,8 @@
+{
+  "buildDir": "build/narrative",
+  "languages": [
+    "ru"
+  ],
+  "name": "Тёмная академия — демо",
+  "start": "dean.first_meeting"
+}

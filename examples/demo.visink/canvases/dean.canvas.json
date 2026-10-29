@@ -1,0 +1,169 @@
+{
+  "cards": [
+    {
+      "entry": "first_meeting",
+      "id": "c1",
+      "repeat": "once",
+      "speaker": "ent_dean",
+      "status": "draft",
+      "text": "Садитесь.",
+      "type": "line"
+    },
+    {
+      "id": "c2",
+      "repeat": "once",
+      "speaker": "ent_dean",
+      "status": "draft",
+      "text": "Итак, ваша диссертация?",
+      "type": "line"
+    },
+    {
+      "id": "c3",
+      "menuText": "«Почти готова».",
+      "repeat": "once",
+      "speaker": "ent_player",
+      "status": "draft",
+      "text": "Почти готова.",
+      "type": "line"
+    },
+    {
+      "action": "thesis_changed = true",
+      "condition": "not thesis_changed",
+      "id": "c4",
+      "menuText": "«Я сменил тему».",
+      "repeat": "once",
+      "speaker": "ent_player",
+      "status": "draft",
+      "text": "Я сменил тему.",
+      "type": "line"
+    },
+    {
+      "action": "dean_trust -= 1",
+      "id": "c5",
+      "menuText": "Промолчать.",
+      "repeat": "once",
+      "speaker": "ent_player",
+      "status": "draft",
+      "text": "",
+      "type": "line"
+    },
+    {
+      "emotion": "cold",
+      "id": "c6",
+      "repeat": "once",
+      "speaker": "ent_dean",
+      "status": "draft",
+      "text": "Посмотрим.",
+      "type": "line"
+    },
+    {
+      "id": "c7",
+      "repeat": "once",
+      "speaker": "ent_dean",
+      "stageDirection": "откидывается в кресле",
+      "status": "draft",
+      "text": "Молчание — тоже ответ.",
+      "type": "line"
+    },
+    {
+      "id": "c8",
+      "target": "advisor.office",
+      "type": "jump"
+    }
+  ],
+  "entries": [
+    {
+      "card": "c1",
+      "name": "first_meeting"
+    }
+  ],
+  "graveyard": [],
+  "groups": [],
+  "id": "dean",
+  "layout": {
+    "c1": {
+      "x": 0,
+      "y": 0
+    },
+    "c2": {
+      "x": 300,
+      "y": 0
+    },
+    "c3": {
+      "x": 600,
+      "y": 0
+    },
+    "c4": {
+      "x": 600,
+      "y": 180
+    },
+    "c5": {
+      "x": 600,
+      "y": 360
+    },
+    "c6": {
+      "x": 900,
+      "y": 0
+    },
+    "c7": {
+      "x": 900,
+      "y": 180
+    },
+    "c8": {
+      "x": 1200,
+      "y": 0
+    }
+  },
+  "links": [
+    {
+      "from": "c1",
+      "kind": "divert",
+      "order": 0,
+      "to": "c2"
+    },
+    {
+      "from": "c2",
+      "kind": "divert",
+      "order": 0,
+      "to": "c3"
+    },
+    {
+      "from": "c2",
+      "kind": "divert",
+      "order": 1,
+      "to": "c4"
+    },
+    {
+      "from": "c2",
+      "kind": "divert",
+      "order": 2,
+      "to": "c5"
+    },
+    {
+      "from": "c3",
+      "kind": "divert",
+      "order": 0,
+      "to": "c6"
+    },
+    {
+      "from": "c4",
+      "kind": "divert",
+      "order": 0,
+      "to": "c6"
+    },
+    {
+      "from": "c5",
+      "kind": "divert",
+      "order": 0,
+      "to": "c7"
+    },
+    {
+      "from": "c6",
+      "kind": "divert",
+      "order": 0,
+      "to": "c8"
+    }
+  ],
+  "notes": [],
+  "title": "Декан"
+}

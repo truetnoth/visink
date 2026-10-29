@@ -1,0 +1,242 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`сборка демо-проекта > стабильный вывод > advisor.ink 1`] = `
+"// Сгенерировано Visink — не править вручную, правки пропадут при следующей сборке.
+=== advisor ===
+-> a1
+= entry_office
+-> a1
+= a1
+НАУЧРУК: Ну что, был у декана? \\# не тег \\{не условие\\} \\[не выбор\\] /\\/ не комментарий \\-> не переход # id: advisor.a1 # speaker: ent_advisor
+-> a2
+= a2
+* [Спросить про архив.] -> a3
+* {logic >= 3} [Спросить про письмо.] -> a4
++ [Уйти.] -> a5
+* -> a12
+= a3
+ИГРОК: Что в архиве? # id: advisor.a3 # speaker: ent_player
+-> a6
+= a6
+НАУЧРУК: Туда пускают только с допуском. # id: advisor.a6 # speaker: ent_advisor
+~ Clues += archive
+-> a2
+= a4
+ИГРОК: Кто прислал письмо? # id: advisor.a4 # speaker: ent_player
+-> a7
+= a7
+НАУЧРУК: Без подписи. Странно, правда? # id: advisor.a7 # speaker: ent_advisor
+~ Clues += letter
+-> a2
+= a5
+ИГРОК: Мне пора. # id: advisor.a5 # speaker: ent_player
+-> a8
+= a8
+{dean_trust < 0: -> a9 | -> a10}
+= a9
+НАУЧРУК: Декан на вас зол. # id: advisor.a9 # speaker: ent_advisor
+-> a10
+= a10
+{~Удачи.|Иди уже.|Хватит.}
+-> a11
+= a11
+-> END
+= a12
+-> a8
+"
+`;
+
+exports[`сборка демо-проекта > стабильный вывод > dean.ink 1`] = `
+"// Сгенерировано Visink — не править вручную, правки пропадут при следующей сборке.
+=== dean ===
+-> c1
+= entry_first_meeting
+-> c1
+= c1
+ДЕКАН: Садитесь. # id: dean.c1 # speaker: ent_dean
+-> c2
+= c2
+ДЕКАН: Итак, ваша диссертация? # id: dean.c2 # speaker: ent_dean
+* [«Почти готова».] -> c3
+* {not thesis_changed} [«Я сменил тему».] -> c4
+* [Промолчать.] -> c5
+= c3
+ИГРОК: Почти готова. # id: dean.c3 # speaker: ent_player
+-> c6
+= c6
+ДЕКАН: Посмотрим. # id: dean.c6 # speaker: ent_dean # emotion: cold
+-> c8
+= c8
+-> advisor.entry_office
+= c4
+ИГРОК: Я сменил тему. # id: dean.c4 # speaker: ent_player
+~ thesis_changed = true
+-> c6
+= c5
+~ dean_trust -= 1
+-> c7
+= c7
+ДЕКАН: Молчание — тоже ответ. # id: dean.c7 # speaker: ent_dean # dir: откидывается в кресле
+-> DONE
+"
+`;
+
+exports[`сборка демо-проекта > стабильный вывод > globals.ink 1`] = `
+"// Сгенерировано Visink — не править вручную, правки пропадут при следующей сборке.
+VAR thesis_changed = false
+VAR dean_trust = 0
+VAR logic = 2
+LIST Clues = archive, letter
+"
+`;
+
+exports[`сборка демо-проекта > стабильный вывод > main.ink 1`] = `
+"// Сгенерировано Visink — не править вручную, правки пропадут при следующей сборке.
+INCLUDE globals.ink
+INCLUDE advisor.ink
+INCLUDE dean.ink
+
+-> dean.entry_first_meeting
+"
+`;
+
+exports[`сборка демо-проекта > стабильный вывод > manifest.json 1`] = `
+"{
+  "canvases": [
+    {
+      "entries": [
+        {
+          "name": "office",
+          "path": "advisor.entry_office"
+        }
+      ],
+      "file": "advisor.ink",
+      "id": "advisor",
+      "title": "Кабинет научрука"
+    },
+    {
+      "entries": [
+        {
+          "name": "first_meeting",
+          "path": "dean.entry_first_meeting"
+        }
+      ],
+      "file": "dean.ink",
+      "id": "dean",
+      "title": "Декан"
+    }
+  ],
+  "characters": [
+    {
+      "color": "#3b82f6",
+      "id": "ent_player",
+      "inkName": "ИГРОК",
+      "isPlayer": true,
+      "name": "Игрок"
+    },
+    {
+      "color": "#6b7280",
+      "id": "ent_narrator",
+      "inkName": "",
+      "name": "Рассказчик"
+    },
+    {
+      "color": "#8a5cf6",
+      "id": "ent_dean",
+      "inkName": "ДЕКАН",
+      "name": "Декан Левенгаупт"
+    },
+    {
+      "color": "#10b981",
+      "id": "ent_advisor",
+      "inkName": "НАУЧРУК",
+      "name": "Научрук"
+    }
+  ],
+  "externals": [],
+  "lines": {
+    "advisor.a1": {
+      "canvas": "advisor",
+      "card": "a1",
+      "speaker": "ent_advisor",
+      "text": "Ну что, был у декана? # не тег {не условие} [не выбор] // не комментарий -> не переход"
+    },
+    "advisor.a3": {
+      "canvas": "advisor",
+      "card": "a3",
+      "speaker": "ent_player",
+      "text": "Что в архиве?"
+    },
+    "advisor.a4": {
+      "canvas": "advisor",
+      "card": "a4",
+      "speaker": "ent_player",
+      "text": "Кто прислал письмо?"
+    },
+    "advisor.a5": {
+      "canvas": "advisor",
+      "card": "a5",
+      "speaker": "ent_player",
+      "text": "Мне пора."
+    },
+    "advisor.a6": {
+      "canvas": "advisor",
+      "card": "a6",
+      "speaker": "ent_advisor",
+      "text": "Туда пускают только с допуском."
+    },
+    "advisor.a7": {
+      "canvas": "advisor",
+      "card": "a7",
+      "speaker": "ent_advisor",
+      "text": "Без подписи. Странно, правда?"
+    },
+    "advisor.a9": {
+      "canvas": "advisor",
+      "card": "a9",
+      "speaker": "ent_advisor",
+      "text": "Декан на вас зол."
+    },
+    "dean.c1": {
+      "canvas": "dean",
+      "card": "c1",
+      "speaker": "ent_dean",
+      "text": "Садитесь."
+    },
+    "dean.c2": {
+      "canvas": "dean",
+      "card": "c2",
+      "speaker": "ent_dean",
+      "text": "Итак, ваша диссертация?"
+    },
+    "dean.c3": {
+      "canvas": "dean",
+      "card": "c3",
+      "speaker": "ent_player",
+      "text": "Почти готова."
+    },
+    "dean.c4": {
+      "canvas": "dean",
+      "card": "c4",
+      "speaker": "ent_player",
+      "text": "Я сменил тему."
+    },
+    "dean.c6": {
+      "canvas": "dean",
+      "card": "c6",
+      "emotion": "cold",
+      "speaker": "ent_dean",
+      "text": "Посмотрим."
+    },
+    "dean.c7": {
+      "canvas": "dean",
+      "card": "c7",
+      "speaker": "ent_dean",
+      "text": "Молчание — тоже ответ."
+    }
+  },
+  "start": "dean.entry_first_meeting",
+  "version": 1
+}
+"
+`;

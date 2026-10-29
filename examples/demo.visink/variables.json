@@ -1,0 +1,32 @@
+{
+  "lists": [
+    {
+      "initial": [],
+      "items": [
+        "archive",
+        "letter"
+      ],
+      "name": "Clues"
+    }
+  ],
+  "vars": [
+    {
+      "default": false,
+      "group": "Сюжет",
+      "name": "thesis_changed",
+      "type": "bool"
+    },
+    {
+      "default": 0,
+      "group": "Отношения",
+      "name": "dean_trust",
+      "type": "int"
+    },
+    {
+      "default": 2,
+      "group": "Навыки",
+      "name": "logic",
+      "type": "int"
+    }
+  ]
+}

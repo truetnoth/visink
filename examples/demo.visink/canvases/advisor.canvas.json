@@ -1,0 +1,249 @@
+{
+  "cards": [
+    {
+      "entry": "office",
+      "id": "a1",
+      "repeat": "once",
+      "speaker": "ent_advisor",
+      "status": "draft",
+      "text": "Ну что, был у декана? # не тег {не условие} [не выбор] // не комментарий -> не переход",
+      "type": "line"
+    },
+    {
+      "id": "a2",
+      "type": "hub"
+    },
+    {
+      "id": "a3",
+      "menuText": "Спросить про архив.",
+      "repeat": "once",
+      "speaker": "ent_player",
+      "status": "draft",
+      "text": "Что в архиве?",
+      "type": "line"
+    },
+    {
+      "condition": "logic >= 3",
+      "id": "a4",
+      "menuText": "Спросить про письмо.",
+      "repeat": "once",
+      "speaker": "ent_player",
+      "status": "draft",
+      "text": "Кто прислал письмо?",
+      "type": "line"
+    },
+    {
+      "id": "a5",
+      "menuText": "Уйти.",
+      "repeat": "sticky",
+      "speaker": "ent_player",
+      "status": "draft",
+      "text": "Мне пора.",
+      "type": "line"
+    },
+    {
+      "action": "~ Clues += archive",
+      "id": "a6",
+      "repeat": "once",
+      "speaker": "ent_advisor",
+      "status": "draft",
+      "text": "Туда пускают только с допуском.",
+      "type": "line"
+    },
+    {
+      "action": "Clues += letter",
+      "id": "a7",
+      "repeat": "once",
+      "speaker": "ent_advisor",
+      "status": "draft",
+      "text": "Без подписи. Странно, правда?",
+      "type": "line"
+    },
+    {
+      "condition": "dean_trust < 0",
+      "id": "a8",
+      "type": "condition"
+    },
+    {
+      "id": "a9",
+      "repeat": "once",
+      "speaker": "ent_advisor",
+      "status": "draft",
+      "text": "Декан на вас зол.",
+      "type": "line"
+    },
+    {
+      "id": "a10",
+      "text": "{~Удачи.|Иди уже.|Хватит.}",
+      "type": "ink"
+    },
+    {
+      "id": "a11",
+      "text": "-> END",
+      "type": "ink"
+    },
+    {
+      "id": "a12",
+      "repeat": "fallback",
+      "speaker": "ent_player",
+      "status": "draft",
+      "text": "",
+      "type": "line"
+    }
+  ],
+  "entries": [
+    {
+      "card": "a1",
+      "name": "office"
+    }
+  ],
+  "graveyard": [],
+  "groups": [],
+  "id": "advisor",
+  "layout": {
+    "a1": {
+      "x": 0,
+      "y": 0
+    },
+    "a10": {
+      "x": 1200,
+      "y": 180
+    },
+    "a11": {
+      "x": 1500,
+      "y": 0
+    },
+    "a12": {
+      "x": 600,
+      "y": 540
+    },
+    "a2": {
+      "x": 300,
+      "y": 0
+    },
+    "a3": {
+      "x": 600,
+      "y": 0
+    },
+    "a4": {
+      "x": 600,
+      "y": 180
+    },
+    "a5": {
+      "x": 600,
+      "y": 360
+    },
+    "a6": {
+      "x": 900,
+      "y": 0
+    },
+    "a7": {
+      "x": 900,
+      "y": 180
+    },
+    "a8": {
+      "x": 900,
+      "y": 360
+    },
+    "a9": {
+      "x": 1200,
+      "y": 0
+    }
+  },
+  "links": [
+    {
+      "from": "a1",
+      "kind": "divert",
+      "order": 0,
+      "to": "a2"
+    },
+    {
+      "from": "a2",
+      "kind": "divert",
+      "order": 0,
+      "to": "a3"
+    },
+    {
+      "from": "a2",
+      "kind": "divert",
+      "order": 1,
+      "to": "a4"
+    },
+    {
+      "from": "a2",
+      "kind": "divert",
+      "order": 2,
+      "to": "a5"
+    },
+    {
+      "from": "a2",
+      "kind": "divert",
+      "order": 3,
+      "to": "a12"
+    },
+    {
+      "from": "a3",
+      "kind": "divert",
+      "order": 0,
+      "to": "a6"
+    },
+    {
+      "from": "a4",
+      "kind": "divert",
+      "order": 0,
+      "to": "a7"
+    },
+    {
+      "from": "a6",
+      "kind": "divert",
+      "order": 0,
+      "to": "a2"
+    },
+    {
+      "from": "a7",
+      "kind": "divert",
+      "order": 0,
+      "to": "a2"
+    },
+    {
+      "from": "a5",
+      "kind": "divert",
+      "order": 0,
+      "to": "a8"
+    },
+    {
+      "from": "a12",
+      "kind": "divert",
+      "order": 0,
+      "to": "a8"
+    },
+    {
+      "from": "a8",
+      "kind": "divert",
+      "order": 0,
+      "port": "yes",
+      "to": "a9"
+    },
+    {
+      "from": "a8",
+      "kind": "divert",
+      "order": 1,
+      "port": "no",
+      "to": "a10"
+    },
+    {
+      "from": "a9",
+      "kind": "divert",
+      "order": 0,
+      "to": "a10"
+    },
+    {
+      "from": "a10",
+      "kind": "divert",
+      "order": 0,
+      "to": "a11"
+    }
+  ],
+  "notes": [],
+  "title": "Кабинет научрука"
+}

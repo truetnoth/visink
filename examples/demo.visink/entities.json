@@ -1,0 +1,31 @@
+[
+  {
+    "color": "#3b82f6",
+    "id": "ent_player",
+    "inkName": "ИГРОК",
+    "isPlayer": true,
+    "kind": "character",
+    "name": "Игрок"
+  },
+  {
+    "color": "#6b7280",
+    "id": "ent_narrator",
+    "inkName": "",
+    "kind": "character",
+    "name": "Рассказчик"
+  },
+  {
+    "color": "#8a5cf6",
+    "id": "ent_dean",
+    "inkName": "ДЕКАН",
+    "kind": "character",
+    "name": "Декан Левенгаупт"
+  },
+  {
+    "color": "#10b981",
+    "id": "ent_advisor",
+    "inkName": "НАУЧРУК",
+    "kind": "character",
+    "name": "Научрук"
+  }
+]

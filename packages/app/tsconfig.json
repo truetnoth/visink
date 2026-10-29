@@ -1,0 +1,8 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "lib": ["ES2022", "DOM", "DOM.Iterable", "DOM.AsyncIterable"],
+    "types": ["vite/client"]
+  },
+  "include": ["src", "../core/src", "../compiler/src", "../checker/src"]
+}

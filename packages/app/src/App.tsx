@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import type { CSSProperties } from "react";
-import { CircleHelp, FilePlus, FolderOpen, Monitor, Moon, PanelLeft, PanelRight, Redo2, Save, Sun, Undo2, X } from "lucide-react";
+import { CircleHelp, FilePlus, FolderOpen, Monitor, Moon, PanelLeft, PanelRight, Redo2, Save, Settings as SettingsIcon, Sun, Undo2, X } from "lucide-react";
 import { useStore as useZustand } from "zustand";
 import { CanvasView, isTyping } from "./CanvasView";
 import { BottomPanel, Library, Properties } from "./Panels";
@@ -8,6 +8,8 @@ import { recentProjects, redo, reopenLastProject, undo, useStore } from "./store
 import { askUser, inTauri } from "./tauriFs";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { fsAccessSupported } from "./browserFs";
+import type { AutosaveSec } from "./prefs";
+import { AUTOSAVE_LABEL, AUTOSAVE_OPTIONS, FONT_MAX, FONT_MIN, usePrefs } from "./prefs";
 import type { ThemeMode } from "./theme";
 import { useTheme } from "./theme";
 import type { PanelSizes } from "./ui";
@@ -44,7 +46,7 @@ function Status({ text }: { text: string }) {
   );
 }
 
-function Toolbar({ panels, onAbout }: { panels: Panels; onAbout: () => void }) {
+function Toolbar({ panels, onAbout, onSettings }: { panels: Panels; onAbout: () => void; onSettings: () => void }) {
   const project = useStore((s) => s.project);
   const dirty = useStore((s) => s.dirty);
   const status = useStore((s) => s.status);
@@ -52,6 +54,7 @@ function Toolbar({ panels, onAbout }: { panels: Panels; onAbout: () => void }) {
   const canUndo = useZustand(useStore.temporal, (s) => s.pastStates.length > 0);
   const canRedo = useZustand(useStore.temporal, (s) => s.futureStates.length > 0);
   const theme = useTheme((s) => s.mode);
+  const autosave = usePrefs((s) => s.autosaveSec);
   return (
     <header className="toolbar">
       {project && (
@@ -59,7 +62,13 @@ function Toolbar({ panels, onAbout }: { panels: Panels; onAbout: () => void }) {
           {/* на стартовом экране эти кнопки уже есть по центру */}
           <IconButton icon={FilePlus} label="Новый проект… (выбрать пустую папку)" onClick={() => openProject(true)} />
           <IconButton icon={FolderOpen} label="Открыть проект…" onClick={() => openProject(false)} />
-          <IconButton icon={Save} primary badge={dirty} label={`Сохранить и собрать ink (Ctrl+S)${dirty ? " — есть несохранённые правки" : ""}`} onClick={save} />
+          <IconButton
+            icon={Save}
+            primary
+            badge={dirty}
+            label={`Сохранить и собрать ink (Ctrl+S)${dirty ? " — есть несохранённые правки" : ""}; автосохранение: ${AUTOSAVE_LABEL[autosave]}`}
+            onClick={() => save()}
+          />
           <span className="toolbar-sep" />
           <IconButton icon={Undo2} label="Отменить (Ctrl+Z)" onClick={undo} disabled={!canUndo} />
           <IconButton icon={Redo2} label="Вернуть (Ctrl+Shift+Z)" onClick={redo} disabled={!canRedo} />
@@ -83,6 +92,7 @@ function Toolbar({ panels, onAbout }: { panels: Panels; onAbout: () => void }) {
           />
         </>
       )}
+      <IconButton icon={SettingsIcon} label="Настройки" className="tip-left" onClick={onSettings} />
       <IconButton icon={CircleHelp} label="О программе и горячие клавиши" className="tip-left" onClick={onAbout} />
       <IconButton
         icon={THEME_ICON[theme]}
@@ -137,6 +147,58 @@ function Welcome({ onAbout }: { onAbout: () => void }) {
   );
 }
 
+/** Настройки этого компьютера: шрифт карточек, сетка, автосохранение. */
+function Settings({ onClose }: { onClose: () => void }) {
+  const { cardFontSize, snap, autosaveSec, set } = usePrefs();
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
+  return (
+    <div className="modal-backdrop" onMouseDown={onClose}>
+      <div className="modal settings" onMouseDown={(e) => e.stopPropagation()}>
+        <div className="modal-head">
+          <div>
+            <h2>Настройки</h2>
+            <div className="muted">Хранятся на этом компьютере, в проект не попадают.</div>
+          </div>
+          <IconButton icon={X} label="Закрыть (Esc)" className="tip-left" onClick={onClose} />
+        </div>
+        <h3>Размер шрифта в карточках</h3>
+        <div className="row">
+          <input type="range" min={FONT_MIN} max={FONT_MAX} step={1} value={cardFontSize} onChange={(e) => set({ cardFontSize: Number(e.target.value) })} />
+          <span className="mono">{cardFontSize}px</span>
+          {cardFontSize !== 12 && (
+            <button className="link" onClick={() => set({ cardFontSize: 12 })}>
+              как было
+            </button>
+          )}
+        </div>
+        <h3>Холст</h3>
+        <label className="check">
+          <input type="checkbox" checked={snap} onChange={(e) => set({ snap: e.target.checked })} />
+          Привязывать карточки к сетке (перемещение и размер); тот же переключатель — магнит на холсте
+        </label>
+        <h3>Автосохранение</h3>
+        <div className="row">
+          <select value={autosaveSec} onChange={(e) => set({ autosaveSec: Number(e.target.value) as AutosaveSec })}>
+            {AUTOSAVE_OPTIONS.map((sec) => (
+              <option key={sec} value={sec}>
+                {AUTOSAVE_LABEL[sec]}
+              </option>
+            ))}
+          </select>
+        </div>
+        <p className="muted">
+          Сохраняет проект и собирает ink через заданное время после правки. Пишутся только изменившиеся файлы: перемещение карточки трогает лишь
+          файл холста, а .ink — только если поменялся сам текст или порядок вариантов. При ошибках в проекте ink не пересобирается.
+        </p>
+      </div>
+    </div>
+  );
+}
+
 function About({ onClose }: { onClose: () => void }) {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
@@ -171,8 +233,10 @@ function About({ onClose }: { onClose: () => void }) {
             <tr><td>Протянуть по пустому месту</td><td>выделить рамкой</td></tr>
             <tr><td>Cmd/Ctrl + протянуть, два пальца</td><td>двигать холст</td></tr>
             <tr><td>Shift+1</td><td>показать всё</td></tr>
-            <tr><td>Enter / Tab</td><td>следующая реплика / ещё один вариант игрока</td></tr>
-            <tr><td>Двойной щелчок по тексту карточки</td><td>править на месте (Enter — готово, Shift+Enter — перенос)</td></tr>
+            <tr><td>Enter / Tab</td><td>следующая реплика / ещё один вариант игрока — сразу с курсором в тексте</td></tr>
+            <tr><td>Щелчок по тексту карточки</td><td>править на месте (Enter — готово, Shift+Enter — перенос)</td></tr>
+            <tr><td>Цветная шапка карточки</td><td>перетащить; несколько выделенных — за любое место</td></tr>
+            <tr><td>Ctrl+C / Ctrl+X / Ctrl+V</td><td>копировать / вырезать / вставить карточки (под курсор)</td></tr>
             <tr><td>Угол выделенной карточки</td><td>изменить размер</td></tr>
             <tr><td>Ctrl+1…9</td><td>сменить спикера</td></tr>
             <tr><td>Ctrl+Space в условии</td><td>подсказки: переменные, функции, списки</td></tr>
@@ -202,6 +266,7 @@ export function App() {
   const dirty = useStore((s) => s.dirty);
   const panels = usePanelSizes();
   const [about, setAbout] = useState(false);
+  const [settings, setSettings] = useState(false);
 
   // приложение: последний проект при запуске, заголовок окна, вопрос перед закрытием с несохранённым
   useEffect(() => {
@@ -214,7 +279,15 @@ export function App() {
   useEffect(() => {
     if (!inTauri) return;
     const unlisten = getCurrentWindow().onCloseRequested(async (e) => {
-      if (!useStore.getState().dirty) return;
+      const { dirty, fs, save } = useStore.getState();
+      if (!dirty) return;
+      // с автосохранением — молча дописать и закрыть
+      if (usePrefs.getState().autosaveSec && fs) {
+        e.preventDefault();
+        await save({ auto: true });
+        if (!useStore.getState().dirty || (await askUser("Сохранить не удалось. Закрыть без сохранения?"))) await getCurrentWindow().destroy();
+        return;
+      }
       if (!(await askUser("Есть несохранённые правки. Закрыть без сохранения?"))) e.preventDefault();
     });
     return () => {
@@ -279,8 +352,9 @@ export function App() {
 
   return (
     <div className="app">
-      <Toolbar panels={panels} onAbout={() => setAbout(true)} />
+      <Toolbar panels={panels} onAbout={() => setAbout(true)} onSettings={() => setSettings(true)} />
       {about && <About onClose={() => setAbout(false)} />}
+      {settings && <Settings onClose={() => setSettings(false)} />}
       {project ? (
         <div
           className="workspace"

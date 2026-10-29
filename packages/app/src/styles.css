@@ -165,6 +165,9 @@ input[type="checkbox"] { width: auto; }
 .palette { display: flex; gap: 2px; padding: 3px; background: var(--panel); border: 1px solid var(--border); border-radius: 7px; box-shadow: var(--card-shadow); }
 .palette .icon-btn { background: none; border-color: transparent; }
 .palette .icon-btn:hover { background: var(--panel-2); border-color: var(--border); }
+.palette .toolbar-sep { align-self: center; }
+.palette .toggle.on { color: var(--accent); background: var(--panel-2); }
+.palette .toggle:not(.on) { opacity: .55; }
 
 .create-menu {
   position: absolute; z-index: 10; min-width: 220px; background: var(--panel); border: 1px solid var(--border-strong);
@@ -185,8 +188,11 @@ input[type="checkbox"] { width: auto; }
 /* карточки: шапка залита цветом спикера, как в articy */
 .card {
   background: var(--card-bg); border: 1px solid var(--card-border); border-radius: 6px; box-shadow: var(--card-shadow);
-  position: relative; font-size: 12px; color: var(--text);
+  position: relative; font-size: var(--card-font, 12px); color: var(--text);
 }
+/* у условия два выхода на фиксированной высоте — карточка не короче них */
+.card-condition { min-height: 100px; }
+.card .mono { font-size: .95em; }
 .card.player { background: var(--card-player); }
 .card.selected { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent), var(--card-shadow); }
 .card-head {
@@ -194,17 +200,16 @@ input[type="checkbox"] { width: auto; }
   border-radius: 5px 5px 0 0; text-shadow: 0 1px 1px #0003;
 }
 .card-type { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.card-entry { font-size: 10px; font-weight: 500; background: #0003; border-radius: 4px; padding: 0 5px; }
-.card-id { font-family: var(--mono); font-weight: 400; font-size: 10px; opacity: .75; }
+.card-entry { font-size: .85em; font-weight: 500; background: #0003; border-radius: 4px; padding: 0 5px; }
+.card-id { font-family: var(--mono); font-weight: 400; font-size: .85em; opacity: .75; }
 .card-body { padding: 6px 8px 8px; display: grid; gap: 4px; }
 .card-text { white-space: pre-wrap; word-break: break-word; display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden; margin: 0; cursor: text; }
 .card-text.empty { color: var(--muted); font-style: italic; }
 .card-text.menu-text { color: var(--menu-text); }
 .card-text.menu-text::before { content: "▸ "; }
-.card-cond { color: var(--cond); font-size: 11px; }
-.card-action { color: var(--action); font-size: 11px; white-space: pre-wrap; }
+.card-cond { color: var(--cond); font-size: .92em; }
 .card-badges { display: flex; gap: 4px; flex-wrap: wrap; }
-.card-badges span { font-size: 10px; background: var(--panel-2); padding: 0 5px; border-radius: 4px; color: var(--muted); }
+.card-badges span { font-size: .85em; background: var(--panel-2); padding: 0 5px; border-radius: 4px; color: var(--muted); }
 .inline-edit { width: 100%; min-height: 60px; font-size: 12px; }
 .problem-badge {
   position: absolute; top: -11px; right: -11px; z-index: 2; min-width: 24px; height: 24px; padding: 0 6px; border-radius: 12px;
@@ -212,7 +217,7 @@ input[type="checkbox"] { width: auto; }
 }
 .problem-badge.error { background: var(--error); }
 .problem-badge.warning { background: var(--warning); color: #3b2a00; }
-.port-label { position: absolute; right: -30px; font-size: 10px; color: var(--muted); }
+.port-label { position: absolute; right: -30px; font-size: .85em; color: var(--muted); }
 .react-flow__edge.edge-yes path { stroke: var(--good); }
 .react-flow__edge.edge-no path { stroke: var(--error); }
 .react-flow__edge.selected path { stroke: var(--accent); }
@@ -226,9 +231,9 @@ input[type="checkbox"] { width: auto; }
 .edge-cond { color: var(--cond); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .edge-action { color: var(--action); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
-.note { background: var(--note-bg); border: 1px solid var(--note-border); border-radius: 6px; width: 200px; }
+.note { background: var(--note-bg); border: 1px solid var(--note-border); border-radius: 6px; width: 200px; font-size: var(--card-font, 12px); }
 .note.selected { box-shadow: 0 0 0 2px var(--accent); }
-.note-grip { font-size: 10px; color: var(--note-text); opacity: .7; padding: 3px 6px; cursor: grab; }
+.note-grip { font-size: .85em; color: var(--note-text); opacity: .7; padding: 3px 6px; cursor: grab; }
 .note textarea { background: transparent; border: none; color: var(--note-text); min-height: 70px; }
 
 .welcome { max-width: 640px; margin: 60px auto; padding: 0 16px; }
@@ -289,7 +294,7 @@ details.more { margin-bottom: 9px; }
 details.more summary { cursor: pointer; color: var(--muted); font-size: 12px; margin-bottom: 6px; }
 
 /* шапка карточки: чипы, полоса логики */
-.card-head .chip { display: inline-flex; align-items: center; gap: 3px; font-size: 10px; font-weight: 500; background: #0003; border-radius: 4px; padding: 1px 5px; flex: none; }
+.card-head .chip { display: inline-flex; align-items: center; gap: 3px; font-size: .85em; font-weight: 500; background: #0003; border-radius: 4px; padding: 1px 5px; flex: none; }
 .status-dot { width: 8px; height: 8px; border-radius: 50%; border: 1.5px solid #fff; flex: none; }
 .status-dot.review { background: var(--warning); }
 .status-dot.final { background: var(--good); }
@@ -386,13 +391,7 @@ button.link:hover { color: var(--text); }
 .react-flow__handle.pin.has-logic.act { background: var(--action); }
 .react-flow__handle.pin-yes { background: var(--good); }
 .react-flow__handle.pin-no { background: var(--error); }
-.pin-label {
-  position: absolute; z-index: 2; max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; pointer-events: none;
-  font-size: 10.5px; padding: 1px 5px; border-radius: 4px; background: var(--panel); border: 1px solid var(--border-strong);
-}
-.pin-label.in { right: calc(100% + 6px); bottom: calc(50% + 6px); color: var(--cond); }
-.pin-label.out { left: calc(100% + 6px); top: calc(50% + 6px); color: var(--action); }
-.card-action { color: var(--action); font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.card-action { color: var(--action); font-size: .92em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 /* края карточки: широкая невидимая зона ресайза, ручки видны только у выделенной */
 .react-flow__resize-control.line.card-resize-line { border-color: transparent; }

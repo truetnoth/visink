@@ -6,6 +6,7 @@ import type { CheckResult } from "@visink/checker";
 import { checkProject } from "@visink/checker";
 import { BrowserFs, pickDirectory } from "./browserFs";
 import { TauriFs, askUser, inTauri, pickTauriDirectory } from "./tauriFs";
+import { usePrefs } from "./prefs";
 
 /** Папка на диске: в браузере — File System Access, в приложении — команды Rust. */
 export type FolderFs = ProjectFs & { readonly name: string };
@@ -59,6 +60,8 @@ interface State {
   /** меняется с каждым сообщением — чтобы одинаковый текст тоже показался заново */
   statusNonce: number;
   focus: { canvas: string; card: string; nonce: number } | null;
+  /** новую карточку сразу открыть на ввод текста */
+  editRequest: { card: string; nonce: number } | null;
 
   edit: (fn: (p: Project) => void) => void;
   editCanvas: (fn: (c: Canvas, p: Project) => void) => void;
@@ -78,11 +81,15 @@ interface State {
   openProject: (create: boolean, picked?: FileSystemDirectoryHandle | string) => Promise<void>;
   /** Проект без папки: для демо и проверки, сохранить нельзя. */
   openInMemory: (project: Project) => void;
-  save: () => Promise<void>;
+  /** auto — автосохранение: короткое сообщение в строке состояния */
+  save: (opts?: { auto?: boolean }) => Promise<void>;
+  requestEdit: (card: string) => void;
   pickBuildDir: () => Promise<void>;
 }
 
 let loading = false;
+/** идёт запись на диск — второе сохранение подождёт следующего раза */
+let saving = false;
 /** Отложенная запись шага отмены — сбрасывается перед undo/redo. */
 let flushHistory: (() => void) | null = null;
 
@@ -102,6 +109,7 @@ export const useStore = create<State>()(
       status: "",
       statusNonce: 0,
       focus: null,
+      editRequest: null,
 
       edit(fn) {
         const project = get().project;
@@ -223,14 +231,18 @@ export const useStore = create<State>()(
         runCheck();
       },
 
-      async save() {
+      requestEdit: (card) => set({ editRequest: { card, nonce: Date.now() } }),
+
+      async save({ auto = false } = {}) {
         const { fs, project, buildFs } = get();
-        if (!project) return;
+        if (!project || saving) return;
         if (!fs) {
+          if (auto) return;
           runCheck();
           set({ statusNonce: Date.now(), status: "Проект в памяти: проверено, но сохранять некуда — откройте или создайте папку проекта" });
           return;
         }
+        saving = true;
         try {
           const written = await saveProject(fs, project);
           const check = checkProject(project);
@@ -244,9 +256,19 @@ export const useStore = create<State>()(
             const changed = await writeBuild(target, dir, check.build.files);
             buildMsg = `сборка → ${buildFs ? buildFs.name : dir} (изменено файлов: ${changed.length})`;
           }
-          set({ check, dirty: false, statusNonce: Date.now(), status: `Сохранено (файлов проекта: ${written.length}), ${buildMsg}` });
+          // правки, пришедшие во время записи, остаются несохранёнными
+          const dirty = get().project !== project;
+          const time = new Date().toLocaleTimeString("ru", { hour: "2-digit", minute: "2-digit" });
+          set({
+            check: dirty ? get().check : check,
+            dirty,
+            statusNonce: Date.now(),
+            status: auto ? `Автосохранено в ${time}${errors ? `, ${buildMsg}` : ""}` : `Сохранено (файлов проекта: ${written.length}), ${buildMsg}`,
+          });
         } catch (e) {
-          set({ statusNonce: Date.now(), status: `Ошибка сохранения: ${(e as Error).message}` });
+          set({ statusNonce: Date.now(), status: `Ошибка ${auto ? "автосохранения" : "сохранения"}: ${(e as Error).message}` });
+        } finally {
+          saving = false;
         }
       },
 
@@ -309,6 +331,36 @@ useStore.subscribe((s, prev) => {
   }
   clearTimeout(checkTimer);
   checkTimer = setTimeout(runCheck, 300);
+});
+
+// Автосохранение: после первой правки — запись через заданный интервал, не чаще.
+let autosaveTimer: ReturnType<typeof setTimeout> | undefined;
+
+function scheduleAutosave() {
+  const sec = usePrefs.getState().autosaveSec;
+  const { dirty, fs } = useStore.getState();
+  if (!sec || !dirty || !fs) {
+    clearTimeout(autosaveTimer);
+    autosaveTimer = undefined;
+    return;
+  }
+  if (autosaveTimer) return;
+  autosaveTimer = setTimeout(async () => {
+    autosaveTimer = undefined;
+    await useStore.getState().save({ auto: true });
+    // не успели записать (шла другая запись) или правили во время записи — следующий круг
+    scheduleAutosave();
+  }, sec * 1000);
+}
+
+useStore.subscribe((s, prev) => {
+  if (s.dirty !== prev.dirty || s.fs !== prev.fs) scheduleAutosave();
+});
+usePrefs.subscribe((s, prev) => {
+  if (s.autosaveSec === prev.autosaveSec) return;
+  clearTimeout(autosaveTimer);
+  autosaveTimer = undefined;
+  scheduleAutosave();
 });
 
 export function undo() {

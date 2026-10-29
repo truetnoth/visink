@@ -149,6 +149,7 @@ function normalizeCanvas(raw: Partial<Canvas> & { cards?: LegacyCard[] }): Canva
   return {
     id: raw.id ?? "canvas",
     title: raw.title ?? raw.id ?? "",
+    ...(raw.group ? { group: raw.group } : {}),
     ...(start ? { start } : {}),
     owner: raw.owner,
     entries: raw.entries ?? [],

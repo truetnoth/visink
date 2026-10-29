@@ -76,6 +76,8 @@ export interface Entry {
 export interface Canvas {
   id: string;
   title: string;
+  /** папка в списке файлов; на сборку не влияет */
+  group?: string;
   /** id карточки, с которой начинается файл (узел ink) */
   start?: string;
   owner?: string;
@@ -100,6 +102,8 @@ export interface Entity {
   color: string;
   portrait?: string;
   isPlayer?: boolean;
+  /** папка в списке персонажей */
+  group?: string;
   props?: Record<string, string>;
 }
 

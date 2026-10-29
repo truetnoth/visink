@@ -1,4 +1,5 @@
 import { useMemo, useRef, useState } from "react";
+import { create } from "zustand";
 import type { Canvas, Card, CardType, Entity, InkFunction, InkListDef, Link, Project, Repeat, TextStatus, Variable as VarDef, VarType } from "@visink/core";
 import { ChevronDown, ChevronRight, ChevronUp, Files, Flag, Search, Users, Variable, X } from "lucide-react";
 import type { Option } from "./ui";
@@ -218,6 +219,61 @@ function SearchResults({ query }: { query: string }) {
   );
 }
 
+const COLLAPSED_KEY = "visink-collapsed-folders";
+
+/** Свёрнутые папки на панелях слева — удобство этого компьютера, не часть проекта. Одно на все списки. */
+function readCollapsed(): Set<string> {
+  try {
+    return new Set(JSON.parse(localStorage.getItem(COLLAPSED_KEY) ?? "[]"));
+  } catch {
+    return new Set();
+  }
+}
+
+const useCollapsed = create<{ ids: Set<string>; toggle: (id: string) => void }>()((set, get) => ({
+  ids: readCollapsed(),
+  toggle(id) {
+    const ids = new Set(get().ids);
+    if (ids.has(id)) ids.delete(id);
+    else ids.add(id);
+    try {
+      localStorage.setItem(COLLAPSED_KEY, JSON.stringify([...ids]));
+    } catch {
+      // не запомним — не страшно
+    }
+    set({ ids });
+  },
+}));
+
+/** Сворачиваемая папка; id отдельный от названия, чтобы одинаковые названия в разных списках не путались. */
+function Folder({ id, title, count, children }: { id: string; title: string; count: number; children: React.ReactNode }) {
+  const open = useCollapsed((s) => !s.ids.has(id));
+  return (
+    <div>
+      <div className="folder-title clickable" onClick={() => useCollapsed.getState().toggle(id)}>
+        {open ? <ChevronDown size={12} /> : <ChevronRight size={12} />} {title} <span className="muted">{count}</span>
+      </div>
+      {open && children}
+    </div>
+  );
+}
+
+/** Раскладка по папкам: папки по алфавиту, без папки — в конце; порядок внутри сохраняется. */
+function byGroup<T extends { group?: string }>(items: T[], none: string): [string, T[]][] {
+  const m = new Map<string, T[]>();
+  for (const x of items) {
+    const g = x.group || none;
+    if (!m.has(g)) m.set(g, []);
+    m.get(g)!.push(x);
+  }
+  return [...m.entries()].sort((a, b) => (a[0] === none ? 1 : b[0] === none ? -1 : a[0].localeCompare(b[0])));
+}
+
+/** Существующие папки — подсказки для поля «Папка». */
+const groupNames = (items: { group?: string }[]) => [...new Set(items.map((x) => x.group).filter((g): g is string => !!g))].sort();
+
+const NO_FOLDER = "Без папки";
+
 function CanvasList() {
   const project = useStore((s) => s.project)!;
   const active = useStore((s) => s.activeCanvas);
@@ -231,6 +287,27 @@ function CanvasList() {
     return m;
   }, [check]);
 
+  const folders = useMemo(
+    () =>
+      byGroup(
+        Object.entries(project.canvases)
+          .sort((a, b) => a[1].title.localeCompare(b[1].title))
+          .map(([key, c]) => ({ key, c, group: c.group })),
+        NO_FOLDER,
+      ),
+    [project.canvases],
+  );
+  const list = (items: { key: string; c: Canvas }[]) => (
+    <ul className="tree">
+      {items.map(({ key, c }) => (
+        <li key={key} className={key === active ? "on" : ""} onClick={() => setActiveCanvas(key)}>
+          {c.title} <span className="muted mono">{c.id}</span>
+          {counts.get(key) ? <span className="err-count">{counts.get(key)}</span> : null}
+        </li>
+      ))}
+    </ul>
+  );
+
   const create = () => {
     if (!title.trim()) return;
     let key = "";
@@ -241,18 +318,13 @@ function CanvasList() {
 
   return (
     <>
-      {(
-        <ul className="tree">
-          {Object.entries(project.canvases)
-            .sort((a, b) => a[1].title.localeCompare(b[1].title))
-            .map(([key, c]) => (
-              <li key={key} className={key === active ? "on" : ""} onClick={() => setActiveCanvas(key)}>
-                {c.title} <span className="muted mono">{c.id}</span>
-                {counts.get(key) ? <span className="err-count">{counts.get(key)}</span> : null}
-              </li>
-            ))}
-        </ul>
-      )}
+      {folders.length === 1 && folders[0][0] === NO_FOLDER
+        ? list(folders[0][1])
+        : folders.map(([group, items]) => (
+            <Folder key={group} id={`canvas:${group}`} title={group} count={items.length}>
+              {list(items)}
+            </Folder>
+          ))}
       <div className="new-canvas row">
         <input placeholder="Новый файл…" value={title} onChange={(e) => setTitle(e.target.value)} onKeyDown={(e) => e.key === "Enter" && create()} />
         <button onClick={create}>Создать</button>
@@ -273,18 +345,28 @@ function EntityList() {
     selectEntity(id);
   };
   const characters = project.entities.filter((e) => e.kind === "character");
+  const folders = byGroup(project.entities, NO_FOLDER);
+  const list = (items: Entity[]) => (
+    <ul className="tree">
+      {items.map((e) => (
+        <li key={e.id} className={e.id === selected ? "on" : ""} onClick={() => selectEntity(e.id)}>
+          <span className="swatch" style={{ background: e.color }} />
+          {e.name}
+          {e.isPlayer && <span className="muted"> · игрок</span>}
+          {e.kind === "character" && characters.indexOf(e) < 9 && <span className="muted mono kbd">⌃{characters.indexOf(e) + 1}</span>}
+        </li>
+      ))}
+    </ul>
+  );
   return (
     <>
-      <ul className="tree">
-        {project.entities.map((e) => (
-          <li key={e.id} className={e.id === selected ? "on" : ""} onClick={() => selectEntity(e.id)}>
-            <span className="swatch" style={{ background: e.color }} />
-            {e.name}
-            {e.isPlayer && <span className="muted"> · игрок</span>}
-            {e.kind === "character" && characters.indexOf(e) < 9 && <span className="muted mono kbd">⌃{characters.indexOf(e) + 1}</span>}
-          </li>
-        ))}
-      </ul>
+      {folders.length === 1 && folders[0][0] === NO_FOLDER
+        ? list(folders[0][1])
+        : folders.map(([group, items]) => (
+            <Folder key={group} id={`ent:${group}`} title={group} count={items.length}>
+              {list(items)}
+            </Folder>
+          ))}
       <button className="wide" onClick={add}>+ Персонаж</button>
     </>
   );
@@ -292,66 +374,20 @@ function EntityList() {
 
 const TYPE_TAG: Record<VarType, string> = { int: "int", float: "float", bool: "bool", string: "str" };
 
-const COLLAPSED_KEY = "visink-collapsed-folders";
-
-/** Свёрнутые папки на панели переменных — удобство этого компьютера, не часть проекта. */
-function readCollapsed(): Set<string> {
-  try {
-    return new Set(JSON.parse(localStorage.getItem(COLLAPSED_KEY) ?? "[]"));
-  } catch {
-    return new Set();
-  }
-}
-
-function writeCollapsed(set: Set<string>) {
-  try {
-    localStorage.setItem(COLLAPSED_KEY, JSON.stringify([...set]));
-  } catch {
-    // не запомним — не страшно
-  }
-}
-
 function VariableList() {
   const project = useStore((s) => s.project)!;
   const inspect = useStore((s) => s.inspect);
   const { edit, inspectVariable } = useStore.getState();
-  const [collapsed, setCollapsed] = useState<Set<string>>(readCollapsed);
   const { vars, lists, functions } = project.variables;
-  const groups = useMemo(() => {
-    const m = new Map<string, typeof vars>();
-    for (const v of [...vars].sort((a, b) => a.name.localeCompare(b.name))) {
-      const g = v.group || "Без группы";
-      if (!m.has(g)) m.set(g, []);
-      m.get(g)!.push(v);
-    }
-    return [...m.entries()].sort((a, b) => (a[0] === "Без группы" ? 1 : b[0] === "Без группы" ? -1 : a[0].localeCompare(b[0])));
-  }, [vars]);
+  const groups = useMemo(() => byGroup([...vars].sort((a, b) => a.name.localeCompare(b.name)), "Без группы"), [vars]);
   const funcGroups = useMemo(() => {
-    const m = new Map<string, InkFunction[]>();
-    const grouped = functions.some((f) => f.group);
-    for (const f of [...functions].sort((a, b) => a.name.localeCompare(b.name))) {
-      const g = grouped ? f.group || "Функции без группы" : "Функции";
-      if (!m.has(g)) m.set(g, []);
-      m.get(g)!.push(f);
-    }
-    return [...m.entries()].sort((a, b) => (a[0] === "Функции без группы" ? 1 : b[0] === "Функции без группы" ? -1 : a[0].localeCompare(b[0])));
+    const sorted = [...functions].sort((a, b) => a.name.localeCompare(b.name));
+    return functions.some((f) => f.group) ? byGroup(sorted, "Функции без группы") : sorted.length ? ([["Функции", sorted]] as [string, InkFunction[]][]) : [];
   }, [functions]);
-  const toggle = (g: string) =>
-    setCollapsed((c) => {
-      const n = new Set(c);
-      if (n.has(g)) n.delete(g);
-      else n.add(g);
-      writeCollapsed(n);
-      return n;
-    });
-  /** Сворачиваемая папка; id отдельный от названия, чтобы «Функции» не путались с группой переменных. */
   const folder = (id: string, title: string, count: number, children: React.ReactNode) => (
-    <div key={id}>
-      <div className="folder-title clickable" onClick={() => toggle(id)}>
-        {collapsed.has(id) ? <ChevronRight size={12} /> : <ChevronDown size={12} />} {title} <span className="muted">{count}</span>
-      </div>
-      {!collapsed.has(id) && children}
-    </div>
+    <Folder key={id} id={id} title={title} count={count}>
+      {children}
+    </Folder>
   );
   const unique = (base: string, taken: string[]) => {
     let name = base;
@@ -493,7 +529,7 @@ function VariableProps({ name, project }: { name: string; project: Project }) {
   const { edit, inspectVariable } = useStore.getState();
   const v = project.variables.vars.find((x) => x.name === name);
   const usages = useMemo(() => variableUsages(project, name), [project, name]);
-  const groups = useMemo(() => [...new Set(project.variables.vars.map((x) => x.group).filter((g): g is string => !!g))].sort(), [project]);
+  const groups = useMemo(() => groupNames(project.variables.vars), [project]);
   if (!v) return null;
   const set = (fn: (x: VarDef) => void) =>
     edit((p) => {
@@ -1123,6 +1159,14 @@ function CanvasProps({ canvas, canvasKey, project }: { canvas: Canvas; canvasKey
       >
         <input className="mono" value={id} onChange={(e) => setId(e.target.value)} onBlur={applyId} onKeyDown={(e) => e.key === "Enter" && applyId()} />
       </Field>
+      <Field label="Папка" hint="для порядка в списке файлов; на ink не влияет">
+        <Combobox
+          value={canvas.group ?? ""}
+          options={groupNames(Object.values(project.canvases))}
+          placeholder="Акт 1, Кампус…"
+          onChange={(g) => edit((p) => (p.canvases[canvasKey].group = g || undefined))}
+        />
+      </Field>
       <Field label="Владелец" hint="главный собеседник: спикер новых реплик">
         <Select
           value={canvas.owner ?? ""}
@@ -1191,6 +1235,9 @@ function EntityProps({ entity, project }: { entity: Entity; project: Project }) 
       </Field>
       <Field label="Цвет">
         <input type="color" value={entity.color} onChange={(e) => set("color", e.target.value)} />
+      </Field>
+      <Field label="Папка" hint="для порядка в списке персонажей">
+        <Combobox value={entity.group ?? ""} options={groupNames(project.entities)} placeholder="Преподаватели, Студенты…" onChange={(g) => set("group", g || undefined)} />
       </Field>
       <Field label="Портрет" hint="путь в проекте, уходит в manifest.json">
         <div className="portrait-row">

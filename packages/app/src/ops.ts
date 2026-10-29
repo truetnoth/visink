@@ -1,5 +1,5 @@
 // Операции правки проекта. Все мутируют черновик (копию), store сам делает копию и пишет историю.
-import type { Canvas, Card, CardType, Point, Project } from "@visink/core";
+import type { Canvas, Card, CardType, Link, Note, Point, Project } from "@visink/core";
 import { canvasPath, createCanvas, createCard, guessStart, isPlayerCard, newCardId, newNoteId, toInkName } from "@visink/core";
 
 export const CARD_W = 280;
@@ -7,6 +7,8 @@ export const COL = 360;
 /** зазор между карточкой и следующей справа */
 const GAP = COL - CARD_W;
 export const ROW = 200;
+/** сдвиг вставки без курсора: две клетки сетки */
+const GRID_STEP = 20;
 
 function takenIds(canvas: Canvas): string[] {
   return [...canvas.cards.map((c) => c.id), ...canvas.graveyard, ...canvas.notes.map((n) => n.id)];
@@ -68,6 +70,90 @@ export function deleteCards(canvas: Canvas, ids: string[]) {
 export function deleteLink(canvas: Canvas, from: string, to: string, port?: string) {
   canvas.links = canvas.links.filter((l) => !(l.from === from && l.to === to && (l.port ?? undefined) === (port ?? undefined)));
   reorderLinks(canvas);
+}
+
+/** Точка, привязанная к сетке шага grid (1 — просто округлить). */
+export function snapPoint(p: { x: number; y: number }, grid = 1) {
+  return { x: Math.round(p.x / grid) * grid, y: Math.round(p.y / grid) * grid };
+}
+
+/** «Выровнять всё по сетке»: позиции и ручные размеры карточек и заметок. */
+export function alignToGrid(canvas: Canvas, grid: number) {
+  for (const [id, p] of Object.entries(canvas.layout)) {
+    const snapped: Point = snapPoint(p, grid);
+    if (p.w != null) snapped.w = Math.max(grid, Math.round(p.w / grid) * grid);
+    if (p.h != null) snapped.h = Math.max(grid, Math.round(p.h / grid) * grid);
+    canvas.layout[id] = snapped;
+  }
+  for (const n of canvas.notes) Object.assign(n, snapPoint(n, grid));
+  reorderLinks(canvas);
+}
+
+// ───────────── копировать / вставить ─────────────
+
+/** Кусок холста в буфере обмена: карточки, заметки, стрелки между ними и раскладка. */
+export interface Fragment {
+  visink: 1;
+  cards: Card[];
+  notes: Note[];
+  links: Link[];
+  layout: Record<string, Point>;
+}
+
+export function copyFragment(canvas: Canvas, ids: string[]): Fragment | null {
+  const set = new Set(ids);
+  const cards = canvas.cards.filter((c) => set.has(c.id));
+  const notes = canvas.notes.filter((n) => set.has(n.id));
+  if (!cards.length && !notes.length) return null;
+  const links = canvas.links.filter((l) => set.has(l.from) && set.has(l.to));
+  const layout = Object.fromEntries(cards.filter((c) => canvas.layout[c.id]).map((c) => [c.id, canvas.layout[c.id]]));
+  return structuredClone({ visink: 1, cards, notes, links, layout });
+}
+
+export function parseFragment(text: string): Fragment | null {
+  try {
+    const f = JSON.parse(text);
+    if (f?.visink !== 1 || !Array.isArray(f.cards) || !Array.isArray(f.notes) || !Array.isArray(f.links)) return null;
+    return { visink: 1, cards: f.cards, notes: f.notes, links: f.links, layout: f.layout ?? {} };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Вставляет кусок с новыми id. at — куда встанет левый верхний угол куска;
+ * без него — со сдвигом от оригинала. Возвращает id вставленного.
+ */
+export function pasteFragment(project: Project, canvas: Canvas, fragment: Fragment, at?: Point, grid = 1): string[] {
+  const corners = [...fragment.cards.map((c) => fragment.layout[c.id] ?? { x: 0, y: 0 }), ...fragment.notes];
+  const minX = Math.min(...corners.map((p) => p.x));
+  const minY = Math.min(...corners.map((p) => p.y));
+  const target = snapPoint(at ?? { x: minX + 2 * GRID_STEP, y: minY + 2 * GRID_STEP }, grid);
+  const move = (p: Point) => snapPoint({ x: p.x - minX + target.x, y: p.y - minY + target.y }, grid);
+  const npc = defaultNpc(project, canvas);
+  const ids = new Map<string, string>();
+  for (const src of fragment.cards) {
+    const { id: _id, entry: _entry, ...rest } = structuredClone(src);
+    if (rest.speaker && !project.entities.some((e) => e.id === rest.speaker)) rest.speaker = npc;
+    const card = createCard(newCardId(takenIds(canvas)), src.type, rest);
+    canvas.cards.push(card);
+    const p = fragment.layout[src.id] ?? { x: minX, y: minY };
+    canvas.layout[card.id] = { ...move(p), ...(p.w != null ? { w: p.w } : {}), ...(p.h != null ? { h: p.h } : {}) };
+    ids.set(src.id, card.id);
+  }
+  for (const src of fragment.notes) {
+    const note = { id: newNoteId(takenIds(canvas)), text: src.text, ...move(src) };
+    canvas.notes.push(note);
+    ids.set(src.id, note.id);
+  }
+  for (const l of fragment.links) {
+    const from = ids.get(l.from);
+    const to = ids.get(l.to);
+    if (from && to) canvas.links.push({ ...structuredClone(l), from, to });
+  }
+  if (!canvas.start) canvas.start = guessStart(canvas)?.id;
+  reorderLinks(canvas);
+  return [...ids.values()];
 }
 
 /** Главный NPC холста: владелец, иначе первый персонаж не-игрок. */

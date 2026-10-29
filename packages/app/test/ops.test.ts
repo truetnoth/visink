@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { checkProject } from "@visink/checker";
 import { demoProject } from "../../checker/test/fixtures";
-import { addCanvas, deleteCards, renameVariable, replaceIdent, variableUsages } from "../src/ops";
+import { addCanvas, alignToGrid, copyFragment, deleteCards, parseFragment, pasteFragment, renameVariable, replaceIdent, snapPoint, variableUsages } from "../src/ops";
 import { searchProject } from "../src/search";
 
 describe("переменные", () => {
@@ -84,5 +84,53 @@ describe("подсказки при вводе", () => {
     expect(suggest('x == "tru', 9, p)).toBeNull();
     expect(suggest("", 0, p)).toBeNull();
     expect(suggest("", 0, p, { forced: true })!.items.length).toBeGreaterThan(5);
+  });
+});
+
+describe("копировать и вставить", () => {
+  it("новые id, стрелки только внутри куска, вход не дублируется", () => {
+    const p = demoProject();
+    const dean = p.canvases.dean;
+    const fragment = parseFragment(JSON.stringify(copyFragment(dean, ["c1", "c2", "c3"])))!;
+    expect(fragment.links.map((l) => `${l.from}>${l.to}`)).toEqual(["c1>c2", "c2>c3"]);
+    const before = dean.cards.length;
+    const ids = pasteFragment(p, dean, fragment, { x: 1003, y: 497 }, 20);
+    expect(ids).toHaveLength(3);
+    expect(dean.cards.length).toBe(before + 3);
+    expect(ids.some((id) => ["c1", "c2", "c3"].includes(id))).toBe(false);
+    const pasted = dean.cards.filter((c) => ids.includes(c.id));
+    expect(pasted.some((c) => c.entry)).toBe(false);
+    expect(pasted.map((c) => c.text)).toEqual(["Садитесь.", "Итак, ваша диссертация?", "Почти готова."]);
+    expect(dean.links.filter((l) => ids.includes(l.from) || ids.includes(l.to))).toHaveLength(2);
+    // левый верхний угол куска — в точке вставки, по сетке
+    const xs = ids.map((id) => dean.layout[id].x);
+    const ys = ids.map((id) => dean.layout[id].y);
+    expect([Math.min(...xs), Math.min(...ys)]).toEqual([1000, 500]);
+    expect(checkProject(p).diagnostics.filter((d) => d.severity === "error")).toEqual([]);
+  });
+
+  it("в другой проект: неизвестный спикер заменяется", () => {
+    const p = demoProject();
+    const fragment = copyFragment(p.canvases.dean, ["c2"])!;
+    fragment.cards[0].speaker = "ent_ghost";
+    const [id] = pasteFragment(p, p.canvases.advisor, fragment);
+    expect(p.canvases.advisor.cards.find((c) => c.id === id)!.speaker).not.toBe("ent_ghost");
+  });
+
+  it("чужой текст — не кусок холста", () => {
+    expect(parseFragment("просто текст")).toBeNull();
+    expect(parseFragment('{"a":1}')).toBeNull();
+  });
+});
+
+describe("сетка", () => {
+  it("привязка точки и выравнивание холста", () => {
+    expect(snapPoint({ x: 29, y: 31 }, 20)).toEqual({ x: 20, y: 40 });
+    expect(snapPoint({ x: 29.6, y: 31.2 })).toEqual({ x: 30, y: 31 });
+    const p = demoProject();
+    const dean = p.canvases.dean;
+    dean.layout.c1 = { x: 13, y: 47, w: 291 };
+    alignToGrid(dean, 20);
+    expect(dean.layout.c1).toEqual({ x: 20, y: 40, w: 300 });
   });
 });

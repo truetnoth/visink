@@ -20,12 +20,30 @@ import {
   useUpdateNodeInternals,
 } from "@xyflow/react";
 import type { LucideIcon } from "lucide-react";
-import { ArrowRightFromLine, Code, Flag, GitBranch, Maximize, MessageSquare, Repeat, StickyNote, Trash2, User } from "lucide-react";
+import { ArrowRightFromLine, Code, Flag, GitBranch, LayoutGrid, Magnet, Maximize, MessageSquare, Repeat, StickyNote, Trash2, User } from "lucide-react";
 import type { Card, CardType, Entity } from "@visink/core";
 import { isPlayerCard } from "@visink/core";
 import { rootCard } from "@visink/compiler";
 import { useStore } from "./store";
-import { CARD_W, addCard, addNextLine, addNote, addPlayerOption, connect, defaultNpc, deleteCards, deleteLink, nextSpeaker, reorderLinks } from "./ops";
+import {
+  CARD_W,
+  addCard,
+  addNextLine,
+  addNote,
+  addPlayerOption,
+  alignToGrid,
+  connect,
+  copyFragment,
+  defaultNpc,
+  deleteCards,
+  deleteLink,
+  nextSpeaker,
+  parseFragment,
+  pasteFragment,
+  reorderLinks,
+  snapPoint,
+} from "./ops";
+import { GRID, usePrefs } from "./prefs";
 import { usePortrait } from "./portraits";
 import { useTheme } from "./theme";
 import { IconButton } from "./ui";
@@ -64,20 +82,31 @@ export function isTyping() {
   return !!el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.tagName === "SELECT" || el.isContentEditable);
 }
 
-const FIELD_CLASS = { text: "", menuText: "menu-text", stageDirection: "stage-dir" } as const;
+const FIELD_CLASS = { text: "", menuText: "menu-text", stageDirection: "stage-dir", condition: "mono" } as const;
+
+/** Высота пинов от верха карточки: одна на всех, чтобы стрелка между карточками на одной строке шла ровно. */
+const PIN_Y = 40;
 
 /**
- * Текст на карточке: правится прямо на месте (тот же элемент становится редактируемым),
+ * Текст на карточке: правится прямо на месте по одному щелчку (тот же элемент становится редактируемым),
  * поэтому шрифт, переносы и размер карточки не скачут. Enter — сохранить, Shift+Enter — перенос, Esc — отмена.
+ * Когда выделено несколько карточек, щелчок по тексту только выделяет — так группу можно тащить за тело.
  */
 const InlineText = memo(function InlineText({
   card,
   field,
   placeholder,
+  mono,
+  autoEdit,
+  locked,
 }: {
   card: Card;
-  field: "text" | "menuText" | "stageDirection";
+  field: "text" | "menuText" | "stageDirection" | "condition";
   placeholder: string;
+  mono?: boolean;
+  /** это поле открывается на ввод, когда карточку только что создали */
+  autoEdit?: boolean;
+  locked?: boolean;
 }) {
   const [editing, setEditing] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
@@ -85,6 +114,14 @@ const InlineText = memo(function InlineText({
   const cancelled = useRef(false);
   const editCanvas = useStore((s) => s.editCanvas);
   const value = card[field] ?? "";
+  const requested = useStore((s) => (autoEdit && s.editRequest?.card === card.id ? s.editRequest.nonce : 0));
+
+  useEffect(() => {
+    if (!requested) return;
+    useStore.setState({ editRequest: null });
+    clickAt.current = null;
+    setEditing(true);
+  }, [requested]);
 
   useLayoutEffect(() => {
     const el = ref.current;
@@ -122,7 +159,7 @@ const InlineText = memo(function InlineText({
     }
   };
 
-  const cls = `card-text ${FIELD_CLASS[field]}`;
+  const cls = `card-text ${FIELD_CLASS[field]} ${mono ? "mono" : ""}`;
   if (editing) {
     return (
       <div
@@ -151,8 +188,8 @@ const InlineText = memo(function InlineText({
     <div
       key="view"
       className={`${cls} ${value ? "" : "empty"}`}
-      onDoubleClick={(e) => {
-        e.stopPropagation();
+      onClick={(e) => {
+        if (locked || e.shiftKey || e.metaKey || e.ctrlKey) return;
         clickAt.current = { x: e.clientX, y: e.clientY };
         setEditing(true);
       }}
@@ -192,6 +229,8 @@ const CardNode = memo(function CardNode({ id, data, selected, width, height }: N
   const updateNodeInternals = useUpdateNodeInternals();
   const [hovered, setHovered] = useState(false);
   const [resizing, setResizing] = useState(false);
+  // выделена вместе с другими: тело карточки тоже тянет, текст по щелчку не открывается
+  const multi = useStore((s) => selected && s.selection.length > 1);
   const color = card.type === "line" ? speaker?.color ?? "var(--service)" : TYPE_COLOR[card.type];
   const Icon = player ? User : TYPE_ICON[card.type];
   const action = actionLinesOf(card.action);
@@ -228,11 +267,11 @@ const CardNode = memo(function CardNode({ id, data, selected, width, height }: N
       <Handle
         type="target"
         position={Position.Left}
+        style={{ top: PIN_Y }}
         className={`pin ${gate ? "has-logic cond" : ""}`}
         title={gate ? `Условие на входе: ${gate}` : "Вход. Щелчок — условие на входе"}
         onClick={card.type !== "condition" ? () => editPin(card.id, "condition") : undefined}
       />
-      {gate && <span className="pin-label in mono">{`{${gate}}`}</span>}
       {problem && (
         <span className={`problem-badge ${problem}`} title={problemText}>
           !{problemCount && problemCount > 1 ? problemCount : ""}
@@ -263,26 +302,32 @@ const CardNode = memo(function CardNode({ id, data, selected, width, height }: N
       </div>
       {card.type === "line" ? (
         // как в articy: аватарка и текст на кнопке, ремарка, реплика
-        <div className="card-body line-body">
+        <div className={`card-body line-body ${multi ? "" : "nodrag"}`}>
           <div className="card-top">
             <Avatar speaker={speaker} />
             <div className={`card-cell ${player ? "" : "unused"}`} title={player ? undefined : "У реплик NPC текст на кнопке не используется"}>
-              <InlineText card={card} field="menuText" placeholder={player ? (card.text ? "в выборе будет реплика" : "текст на кнопке…") : "не используется"} />
+              <InlineText
+                card={card}
+                field="menuText"
+                locked={multi}
+                autoEdit={player}
+                placeholder={player ? (card.text ? "в выборе будет реплика" : "текст на кнопке…") : "не используется"}
+              />
             </div>
           </div>
           <div className="card-cell">
-            <InlineText card={card} field="stageDirection" placeholder="ремарка…" />
+            <InlineText card={card} field="stageDirection" locked={multi} placeholder="ремарка…" />
           </div>
           <div className="card-cell grow">
-            <InlineText card={card} field="text" placeholder={player ? "(реплика не звучит)" : "двойной щелчок — текст"} />
+            <InlineText card={card} field="text" locked={multi} autoEdit={!player} placeholder={player ? "(реплика не звучит)" : "текст реплики…"} />
           </div>
         </div>
       ) : (
-        <div className="card-body">
+        <div className={`card-body ${multi ? "" : "nodrag"}`}>
           {card.type === "hub" && <div className="card-text empty">цикл вариантов</div>}
-          {card.type === "condition" && <div className="card-text mono">{card.condition || "условие?"}</div>}
+          {card.type === "condition" && <InlineText card={card} field="condition" locked={multi} autoEdit placeholder="условие?" />}
           {card.type === "jump" && <div className="card-text mono">→ {card.target || "цель?"}</div>}
-          {card.type === "ink" && <pre className="card-text mono">{card.text || "чистый ink"}</pre>}
+          {card.type === "ink" && <InlineText card={card} field="text" mono locked={multi} autoEdit placeholder="чистый ink" />}
           {!outPin &&
             action.map((l, i) => (
               <div key={i} className="card-action mono">{l}</div>
@@ -291,21 +336,21 @@ const CardNode = memo(function CardNode({ id, data, selected, width, height }: N
       )}
       {card.type === "condition" ? (
         <>
-          <Handle type="source" id="yes" position={Position.Right} style={{ top: "40%" }} className="pin pin-yes" />
-          <Handle type="source" id="no" position={Position.Right} style={{ top: "75%" }} className="pin pin-no" />
-          <span className="port-label" style={{ top: "calc(40% - 18px)" }}>да</span>
-          <span className="port-label" style={{ top: "calc(75% - 18px)" }}>нет</span>
+          <Handle type="source" id="yes" position={Position.Right} style={{ top: PIN_Y }} className="pin pin-yes" />
+          <Handle type="source" id="no" position={Position.Right} style={{ top: PIN_Y + 2 * GRID }} className="pin pin-no" />
+          <span className="port-label" style={{ top: PIN_Y - 18 }}>да</span>
+          <span className="port-label" style={{ top: PIN_Y + 2 * GRID - 18 }}>нет</span>
         </>
       ) : outPin ? (
         <>
           <Handle
             type="source"
             position={Position.Right}
+            style={{ top: PIN_Y }}
             className={`pin ${action.length ? "has-logic act" : ""}`}
             title={action.length ? `Действие на выходе:\n${action.join("\n")}` : "Выход: тяните стрелку. Щелчок — действие"}
             onClick={() => editPin(card.id, "action")}
           />
-          {action.length > 0 && <span className="pin-label out mono">{action.length > 1 ? `${action[0]} …` : action[0]}</span>}
         </>
       ) : null}
     </div>
@@ -428,7 +473,9 @@ function Flow() {
   const check = useStore((s) => s.check);
   const focus = useStore((s) => s.focus);
   const colorMode = useTheme((s) => s.resolved);
-  const { editCanvas, setSelection, focusCard } = useStore.getState();
+  const snap = usePrefs((s) => s.snap);
+  const fontSize = usePrefs((s) => s.cardFontSize);
+  const { editCanvas, setSelection, focusCard, requestEdit } = useStore.getState();
   const { screenToFlowPosition, setCenter, fitView } = useReactFlow();
   const wrapper = useRef<HTMLDivElement>(null);
 
@@ -576,7 +623,7 @@ function Flow() {
       setMenu({
         x: Math.min(clientX - (rect?.left ?? 0), (rect?.width ?? 1e4) - 230),
         y: Math.min(clientY - (rect?.top ?? 0), (rect?.height ?? 1e4) - 300),
-        at: { x: Math.round(at.x), y: Math.round(at.y) },
+        at: snapPoint(at, usePrefs.getState().snap ? GRID : 1),
         from,
         port,
       });
@@ -630,10 +677,11 @@ function Flow() {
     );
     if (!menu.from) {
       items.push({ label: "Заметка", icon: StickyNote, type: "note" });
+      items.push({ label: "Выровнять всё по сетке", icon: LayoutGrid, run: () => editCanvas((c) => alignToGrid(c, GRID)) });
       items.push({ label: "Показать всё (Shift+1)", icon: Maximize, run: () => fitView({ padding: 0.2, maxZoom: 1, duration: 200 }) });
     }
     return items;
-  }, [menu, project, canvas, fitView]);
+  }, [menu, project, canvas, fitView, editCanvas]);
 
   const pickMenu = useCallback(
     (item: MenuItem) => {
@@ -650,10 +698,13 @@ function Flow() {
         if (menu.from) connect(canvas, menu.from, card.id, menu.port);
         newId = card.id;
       });
-      if (newId) setSelection([newId]);
+      if (newId) {
+        setSelection([newId]);
+        requestEdit(newId);
+      }
       wrapper.current?.focus();
     },
-    [menu, editCanvas, setSelection],
+    [menu, editCanvas, setSelection, requestEdit],
   );
 
   // правый щелчок по карточке — действия с ней
@@ -715,12 +766,14 @@ function Flow() {
   const createAt = useCallback(
     (type: CardType | "note" | "player", at?: { x: number; y: number }) => {
       const rect = wrapper.current?.getBoundingClientRect();
-      const pos =
+      const pos = snapPoint(
         at ??
-        screenToFlowPosition({
-          x: (rect?.left ?? 0) + (rect?.width ?? 800) / 2 - CARD_W / 2,
-          y: (rect?.top ?? 0) + (rect?.height ?? 600) / 2 - 40,
-        });
+          screenToFlowPosition({
+            x: (rect?.left ?? 0) + (rect?.width ?? 800) / 2 - CARD_W / 2,
+            y: (rect?.top ?? 0) + (rect?.height ?? 600) / 2 - 40,
+          }),
+        usePrefs.getState().snap ? GRID : 1,
+      );
       let newId = "";
       editCanvas((canvas, p) => {
         if (type === "note") {
@@ -734,9 +787,12 @@ function Flow() {
         const init: Partial<Card> = type === "line" ? { speaker: defaultNpc(p, canvas) } : {};
         newId = addCard(canvas, type, pos, init).id;
       });
-      if (newId) setSelection([newId]);
+      if (newId) {
+        setSelection([newId]);
+        requestEdit(newId);
+      }
     },
-    [editCanvas, screenToFlowPosition, setSelection],
+    [editCanvas, screenToFlowPosition, setSelection, requestEdit],
   );
 
   const onDoubleClick = useCallback(
@@ -768,6 +824,7 @@ function Flow() {
         });
         if (newId) {
           setSelection([newId]);
+          requestEdit(newId);
           const at = useStore.getState().project?.canvases[activeCanvas]?.layout[newId];
           if (at) setCenter(at.x + CARD_W / 2, at.y + 60, { zoom: 1, duration: 200 });
         }
@@ -784,12 +841,57 @@ function Flow() {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [editCanvas, setSelection, setCenter]);
+  }, [editCanvas, setSelection, setCenter, requestEdit]);
+
+  // Ctrl+C / Ctrl+X / Ctrl+V: карточки и заметки со стрелками между ними — через системный буфер,
+  // поэтому можно вставлять в другой файл и даже в другое окно. В полях ввода — обычный текст.
+  const pointer = useRef<{ x: number; y: number } | null>(null);
+  useEffect(() => {
+    const onCopy = (e: ClipboardEvent) => {
+      if (isTyping()) return;
+      const { selection, project, activeCanvas } = useStore.getState();
+      const canvas = project && activeCanvas ? project.canvases[activeCanvas] : null;
+      const fragment = canvas && copyFragment(canvas, selection);
+      if (!fragment || !e.clipboardData) return;
+      e.preventDefault();
+      e.clipboardData.setData("text/plain", JSON.stringify(fragment));
+      if (e.type === "cut") {
+        editCanvas((c) => deleteCards(c, selection));
+        setSelection([]);
+      }
+    };
+    const onPaste = (e: ClipboardEvent) => {
+      if (isTyping()) return;
+      const fragment = parseFragment(e.clipboardData?.getData("text/plain") ?? "");
+      if (!fragment) return;
+      e.preventDefault();
+      const at = pointer.current ? screenToFlowPosition(pointer.current) : undefined;
+      let ids: string[] = [];
+      editCanvas((c, p) => (ids = pasteFragment(p, c, fragment, at, usePrefs.getState().snap ? GRID : 1)));
+      setSelection([...ids].sort());
+    };
+    window.addEventListener("copy", onCopy);
+    window.addEventListener("cut", onCopy);
+    window.addEventListener("paste", onPaste);
+    return () => {
+      window.removeEventListener("copy", onCopy);
+      window.removeEventListener("cut", onCopy);
+      window.removeEventListener("paste", onPaste);
+    };
+  }, [editCanvas, setSelection, screenToFlowPosition]);
 
   if (!canvas) return <div className="empty-state">Выберите или создайте файл слева</div>;
 
   return (
-    <div className="flow" ref={wrapper} onDoubleClick={onDoubleClick} tabIndex={-1}>
+    <div
+      className="flow"
+      ref={wrapper}
+      onDoubleClick={onDoubleClick}
+      onMouseMove={(e) => (pointer.current = { x: e.clientX, y: e.clientY })}
+      onMouseLeave={() => (pointer.current = null)}
+      style={{ ["--card-font" as string]: `${fontSize}px` }}
+      tabIndex={-1}
+    >
       <ReactFlow
         nodes={nodes}
         edges={edges}
@@ -817,8 +919,8 @@ function Flow() {
         }}
         proOptions={{ hideAttribution: true }}
         zoomOnDoubleClick={false}
-        snapToGrid
-        snapGrid={[20, 20]}
+        snapToGrid={snap}
+        snapGrid={[GRID, GRID]}
         deleteKeyCode={["Delete", "Backspace"]}
         // протянуть по пустому месту — рамка выделения; холст двигают Cmd/Ctrl, средняя кнопка и два пальца
         selectionOnDrag
@@ -841,6 +943,13 @@ function Flow() {
           <IconButton icon={ArrowRightFromLine} label="Переход в другой файл" onClick={() => createAt("jump")} />
           <IconButton icon={Code} label="Чистый ink" onClick={() => createAt("ink")} />
           <IconButton icon={StickyNote} label="Заметка (не попадает в ink)" onClick={() => createAt("note")} />
+          <span className="toolbar-sep" />
+          <IconButton
+            icon={Magnet}
+            className={`toggle ${snap ? "on" : ""}`}
+            label={snap ? "Привязка к сетке включена — щёлкните, чтобы двигать свободно" : "Свободное перемещение — щёлкните, чтобы привязывать к сетке"}
+            onClick={() => usePrefs.getState().set({ snap: !snap })}
+          />
         </Panel>
       </ReactFlow>
       {cardMenu && canvas && (

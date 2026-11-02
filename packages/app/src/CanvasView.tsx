@@ -84,9 +84,6 @@ export function isTyping() {
 
 const FIELD_CLASS = { text: "", menuText: "menu-text", stageDirection: "stage-dir", condition: "mono" } as const;
 
-/** Высота пинов от верха карточки: одна на всех, чтобы стрелка между карточками на одной строке шла ровно. */
-const PIN_Y = 40;
-
 /**
  * Текст на карточке: правится прямо на месте по одному щелчку (тот же элемент становится редактируемым),
  * поэтому шрифт, переносы и размер карточки не скачут. Enter — сохранить, Shift+Enter — перенос, Esc — отмена.
@@ -267,7 +264,7 @@ const CardNode = memo(function CardNode({ id, data, selected, width, height }: N
       <Handle
         type="target"
         position={Position.Left}
-        style={{ top: PIN_Y }}
+        style={{ top: "50%" }}
         className={`pin ${gate ? "has-logic cond" : ""}`}
         title={gate ? `Условие на входе: ${gate}` : "Вход. Щелчок — условие на входе"}
         onClick={card.type !== "condition" ? () => editPin(card.id, "condition") : undefined}
@@ -336,17 +333,17 @@ const CardNode = memo(function CardNode({ id, data, selected, width, height }: N
       )}
       {card.type === "condition" ? (
         <>
-          <Handle type="source" id="yes" position={Position.Right} style={{ top: PIN_Y }} className="pin pin-yes" />
-          <Handle type="source" id="no" position={Position.Right} style={{ top: PIN_Y + 2 * GRID }} className="pin pin-no" />
-          <span className="port-label" style={{ top: PIN_Y - 18 }}>да</span>
-          <span className="port-label" style={{ top: PIN_Y + 2 * GRID - 18 }}>нет</span>
+          <Handle type="source" id="yes" position={Position.Right} style={{ top: "40%" }} className="pin pin-yes" />
+          <Handle type="source" id="no" position={Position.Right} style={{ top: "75%" }} className="pin pin-no" />
+          <span className="port-label" style={{ top: "calc(40% - 18px)" }}>да</span>
+          <span className="port-label" style={{ top: "calc(75% - 18px)" }}>нет</span>
         </>
       ) : outPin ? (
         <>
           <Handle
             type="source"
             position={Position.Right}
-            style={{ top: PIN_Y }}
+            style={{ top: "50%" }}
             className={`pin ${action.length ? "has-logic act" : ""}`}
             title={action.length ? `Действие на выходе:\n${action.join("\n")}` : "Выход: тяните стрелку. Щелчок — действие"}
             onClick={() => editPin(card.id, "action")}

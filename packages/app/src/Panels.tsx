@@ -6,7 +6,7 @@ import type { Option } from "./ui";
 import { CodeInput, Combobox, IconButton, Select as UiSelect } from "./ui";
 import type { Hit } from "./search";
 import { HIT_GROUPS, searchProject } from "./search";
-import { isPlayerCard, isValidInkName } from "@visink/core";
+import { canvasAtPath, flowCards, isPlayerCard, isValidInkName } from "@visink/core";
 import { unknownIdentifiers } from "@visink/checker";
 import { useStore } from "./store";
 import { askUser } from "./tauriFs";
@@ -59,9 +59,9 @@ function Text({
 }) {
   const cls = mono ? "mono" : "";
   return multiline ? (
-    <textarea ref={inputRef} className={cls} rows={rows} value={value} placeholder={placeholder} onChange={(e) => onChange(e.target.value)} />
+    <textarea ref={inputRef} className={cls} rows={rows} value={value} placeholder={placeholder} spellCheck={!mono} autoCapitalize={mono ? "off" : undefined} autoCorrect={mono ? "off" : undefined} onChange={(e) => onChange(e.target.value)} />
   ) : (
-    <input ref={inputRef} className={cls} value={value} placeholder={placeholder} list={list} onChange={(e) => onChange(e.target.value)} />
+    <input ref={inputRef} className={cls} value={value} placeholder={placeholder} list={list} spellCheck={!mono} autoCapitalize={mono ? "off" : undefined} autoCorrect={mono ? "off" : undefined} onChange={(e) => onChange(e.target.value)} />
   );
 }
 
@@ -113,7 +113,6 @@ function ExprField({
 // ───────────── библиотека ─────────────
 
 export function Library() {
-  const [tab, setTab] = useState<"canvases" | "entities" | "vars">("canvases");
   const [query, setQuery] = useState("");
   return (
     <aside className="library">
@@ -131,32 +130,92 @@ export function Library() {
           </button>
         )}
       </div>
-      {query.trim() ? (
-        <div className="library-body">
-          <SearchResults query={query} />
-        </div>
-      ) : (
-        <>
-          <div className="tabs">
-            <button className={`tab-icon ${tab === "canvases" ? "on" : ""}`} data-tip="Файлы ink" aria-label="Файлы ink" onClick={() => setTab("canvases")}>
-              <Files size={16} />
-            </button>
-            <button className={`tab-icon ${tab === "entities" ? "on" : ""}`} data-tip="Персонажи" aria-label="Персонажи" onClick={() => setTab("entities")}>
-              <Users size={16} />
-            </button>
-            <button className={`tab-icon ${tab === "vars" ? "on" : ""}`} data-tip="Переменные, списки и функции" aria-label="Переменные, списки и функции" onClick={() => setTab("vars")}>
-              <Variable size={16} />
-            </button>
-            <span className="tabs-title">{tab === "canvases" ? "Файлы" : tab === "entities" ? "Персонажи" : "Логика"}</span>
-          </div>
-          <div className="library-body">
-            {tab === "canvases" && <CanvasList />}
-            {tab === "entities" && <EntityList />}
-            {tab === "vars" && <VariableList />}
-          </div>
-        </>
-      )}
+      <div className="library-body">{query.trim() ? <SearchResults query={query} /> : <ProjectTree />}</div>
     </aside>
+  );
+}
+
+function NestedFlowTree({ rootKey, canvas, path }: { rootKey: string; canvas: Canvas; path: string[] }) {
+  const { activeCanvas, flowPath, setActiveCanvas } = useStore.getState();
+  const nested = canvas.cards.filter((card) => card.flow);
+  if (!nested.length) return null;
+  return (
+    <ul className="tree nested-tree">
+      {nested.map((card) => {
+        const nextPath = [...path, card.id];
+        const active = activeCanvas === rootKey && flowPath.length === nextPath.length && flowPath.every((id, i) => id === nextPath[i]);
+        return (
+          <li key={card.id} className={active ? "on" : ""} onClick={(e) => { e.stopPropagation(); setActiveCanvas(rootKey, nextPath); }}>
+            <span className="ellipsis">{card.text || card.menuText || card.condition || TYPE_LABEL[card.type]}</span>
+            <NestedFlowTree rootKey={rootKey} canvas={card.flow!} path={nextPath} />
+          </li>
+        );
+      })}
+    </ul>
+  );
+}
+
+function ProjectTree() {
+  const project = useStore((s) => s.project)!;
+  const active = useStore((s) => s.activeCanvas);
+  const flowPath = useStore((s) => s.flowPath);
+  const selectedEntity = useStore((s) => s.selectedEntity);
+  const { edit, setActiveCanvas, selectEntity, inspectVariable, openEditor } = useStore.getState();
+  const globals = project.variables.vars.filter((v) => !v.owner);
+  const globalGroups = byGroup(globals, NO_FOLDER);
+  const files = byGroup(Object.entries(project.canvases).map(([key, c]) => ({ key, c, group: c.group })), NO_FOLDER);
+  const characters = byGroup(project.entities, NO_FOLDER);
+  const addFile = () => {
+    let key = "";
+    edit((p) => (key = addCanvas(p, "Новый файл")));
+    setActiveCanvas(key);
+    openEditor();
+  };
+  const addCharacter = () => {
+    let id = "";
+    edit((p) => {
+      id = `ent_${p.entities.length}`;
+      for (let i = p.entities.length; p.entities.some((e) => e.id === id); i++) id = `ent_${i + 1}`;
+      p.entities.push({ id, kind: "character", name: "Новый персонаж", inkName: "ПЕРСОНАЖ", color: COLORS[p.entities.length % COLORS.length] });
+    });
+    selectEntity(id);
+  };
+  const fileList = (items: { key: string; c: Canvas }[]) => (
+    <ul className="tree">
+      {items.map(({ key, c }) => (
+        <li key={key} className={key === active && flowPath.length === 0 ? "on" : ""} title="Двойной щелчок — свойства и переименование" onClick={() => setActiveCanvas(key)} onDoubleClick={() => { setActiveCanvas(key); openEditor(); }}>
+          <span className="ellipsis">{c.title} <span className="muted mono">{c.id}</span></span>
+          <NestedFlowTree rootKey={key} canvas={c} path={[]} />
+        </li>
+      ))}
+    </ul>
+  );
+  return (
+    <div className="project-tree">
+      <button className="tree-root" onClick={() => { setActiveCanvas(active); openEditor(); }}>Настройки проекта</button>
+      <Folder id="root:globals" title="Глобальные переменные" count={globals.length}>
+        {globalGroups.map(([group, items]) => {
+          const list = <ul className="tree">
+            {items.map((v) => <li key={v.name} onClick={() => inspectVariable("var", v.name)}><span className="mono">{v.name}</span><span className="type-tag">{v.type}</span></li>)}
+          </ul>;
+          return group === NO_FOLDER ? <div key={group}>{list}</div> : <Folder key={group} id={`global:${group}`} title={group} count={items.length}>{list}</Folder>;
+        })}
+      </Folder>
+      <Folder id="root:files" title="Файлы Ink" count={Object.keys(project.canvases).length}>
+        {files.map(([group, items]) => group === NO_FOLDER ? fileList(items) : <Folder key={group} id={`canvas:${group}`} title={group} count={items.length}>{fileList(items)}</Folder>)}
+        <button className="wide" onClick={addFile}>+ Файл</button>
+      </Folder>
+      <Folder id="root:characters" title="Персонажи" count={project.entities.length}>
+        {characters.map(([group, items]) => (
+          <Folder key={group} id={`ent:${group}`} title={group} count={items.length}>
+            <ul className="tree">
+              {items.map((e) => <li key={e.id} className={e.id === selectedEntity ? "on" : ""} onClick={() => selectEntity(e.id)}><span className="swatch" style={{ background: e.color }} />{e.name}</li>)}
+            </ul>
+          </Folder>
+        ))}
+        <button className="wide" onClick={addCharacter}>+ Персонаж</button>
+      </Folder>
+    </div>
   );
 }
 
@@ -180,7 +239,7 @@ function openHit(hit: Hit) {
   else if (hit.kind === "card" && hit.key) st.focusCard(hit.key, hit.card);
   else if (hit.kind === "link" && hit.key && hit.link) st.focusLink(hit.key, hit.link);
   else if (hit.kind === "entity" && hit.id) st.selectEntity(hit.id);
-  else if ((hit.kind === "var" || hit.kind === "list" || hit.kind === "func") && hit.id) st.inspectVariable(hit.kind, hit.id);
+  else if ((hit.kind === "var" || hit.kind === "list" || hit.kind === "func") && hit.id) st.inspectVariable(hit.kind, hit.id, hit.owner);
 }
 
 function SearchResults({ query }: { query: string }) {
@@ -253,7 +312,7 @@ function Folder({ id, title, count, children }: { id: string; title: string; cou
       <div className="folder-title clickable" onClick={() => useCollapsed.getState().toggle(id)}>
         {open ? <ChevronDown size={12} /> : <ChevronRight size={12} />} {title} <span className="muted">{count}</span>
       </div>
-      {open && children}
+      {open && <div className="folder-content">{children}</div>}
     </div>
   );
 }
@@ -493,7 +552,7 @@ function NameField({ name, project, onRename }: { name: string; project: Project
       label="Имя"
       hint={!isValidInkName(value) ? <span className="bad">только латиница, цифры и _</span> : taken ? <span className="bad">имя занято</span> : "переименование обновит все условия и действия"}
     >
-      <input className="mono" autoFocus={name.startsWith("new_") || name.startsWith("NewList")} value={value} onChange={(e) => setValue(e.target.value)} onBlur={apply} onKeyDown={(e) => e.key === "Enter" && apply()} />
+      <input className="mono" spellCheck={false} autoCapitalize="off" autoCorrect="off" autoFocus={name.startsWith("new_") || name.startsWith("NewList")} value={value} onChange={(e) => setValue(e.target.value)} onBlur={apply} onKeyDown={(e) => e.key === "Enter" && apply()} />
     </Field>
   );
 }
@@ -564,7 +623,7 @@ function VariableProps({ name, project }: { name: string; project: Project }) {
         </Field>
         <Field label="По умолчанию">
           {v.type === "bool" ? (
-            <Select value={v.default === true || v.default === "true" ? "true" : "false"} onChange={(b) => set((x) => (x.default = b === "true"))} options={[["false", "false"], ["true", "true"]]} />
+            <Select value={v.default === true || v.default === "true" ? "true" : "false"} onChange={(b) => set((x) => (x.default = b === "true"))} options={[["true", "TRUE"], ["false", "FALSE"]]} />
           ) : v.type === "string" ? (
             <input value={String(v.default)} onChange={(e) => set((x) => (x.default = e.target.value))} />
           ) : (
@@ -629,7 +688,7 @@ function FunctionProps({ name, project }: { name: string; project: Project }) {
         }}
       />
       <Field label="Параметры" hint={bad.length ? <span className="bad">неверные имена: {bad.join(", ")}</span> : "через запятую"}>
-        <input className="mono" value={params} placeholder="who, amount" onChange={(e) => setParams(e.target.value)} onBlur={() => !bad.length && set((x) => (x.params = parsed))} />
+        <input className="mono" spellCheck={false} autoCapitalize="off" autoCorrect="off" value={params} placeholder="who, amount" onChange={(e) => setParams(e.target.value)} onBlur={() => !bad.length && set((x) => (x.params = parsed))} />
       </Field>
       <Field label="Описание" hint="показывается в подсказках при вводе">
         <Text value={f.description ?? ""} onChange={(v) => set((x) => (x.description = v || undefined))} />
@@ -694,6 +753,9 @@ function ListProps({ name, project }: { name: string; project: Project }) {
       <Field label="Элементы" hint={bad.length ? <span className="bad">неверные имена: {bad.join(", ")}</span> : "через запятую"}>
         <input
           className="mono"
+          spellCheck={false}
+          autoCapitalize="off"
+          autoCorrect="off"
           value={items}
           onChange={(e) => setItems(e.target.value)}
           onBlur={() =>
@@ -746,7 +808,9 @@ export function Properties() {
   const selectedEntity = useStore((s) => s.selectedEntity);
   const selectedLink = useStore((s) => s.selectedLink);
   const inspect = useStore((s) => s.inspect);
-  const canvas = key ? project.canvases[key] : undefined;
+  const flowPath = useStore((s) => s.flowPath);
+  const root = key ? project.canvases[key] : undefined;
+  const canvas = root ? canvasAtPath(root, flowPath) : undefined;
   const link = canvas && selectedLink ? canvas.links.find((l) => `${l.from}>${l.to}>${l.port ?? ""}` === selectedLink) : undefined;
   const card = canvas && selection.length === 1 ? canvas.cards.find((c) => c.id === selection[0]) : undefined;
   const entity = selectedEntity ? project.entities.find((e) => e.id === selectedEntity) : undefined;
@@ -788,7 +852,6 @@ function CardProps({ card, canvas, canvasKey, project }: { card: Card; canvas: C
       else target[field] = value;
     });
   const player = isPlayerCard(project, card);
-  const ink = check?.build.canvases[canvasKey]?.cardInk[card.id];
   const problems = (check?.diagnostics ?? []).filter((d) => d.canvas === canvasKey && d.card === card.id);
   const incoming = useMemo(() => {
     const out: { key: string; canvas: Canvas; card: Card }[] = [];
@@ -797,10 +860,10 @@ function CardProps({ card, canvas, canvasKey, project }: { card: Card; canvas: C
       if (from) out.push({ key: canvasKey, canvas, card: from });
     }
     for (const [k, c] of Object.entries(project.canvases)) {
-      for (const j of c.cards) {
+      for (const { canvas: flow, card: j } of flowCards(c)) {
         if (j.type !== "jump" || !j.target) continue;
         const [cid, sub] = j.target.split(".");
-        if (cid === canvas.id && (sub === card.id || (card.entry && sub === `entry_${card.entry}`) || (card.entry && sub === card.entry))) out.push({ key: k, canvas: c, card: j });
+        if (cid === canvas.id && (sub === card.id || (card.entry && sub === `entry_${card.entry}`) || (card.entry && sub === card.entry))) out.push({ key: k, canvas: flow, card: j });
       }
     }
     return out;
@@ -819,8 +882,11 @@ function CardProps({ card, canvas, canvasKey, project }: { card: Card; canvas: C
         <div className="field-hint pad">Несколько стрелок: варианты в меню и проверка веток идут сверху вниз по положению карточек.</div>
       )}
       <Field label="Тип">
-        <Select<CardType> value={card.type} onChange={(t) => set("type", t)} options={(Object.keys(TYPE_LABEL) as CardType[]).map((t) => [t, TYPE_LABEL[t]])} />
+        <Select<CardType> value={card.type} onChange={(t) => set("type", t)} options={(Object.keys(TYPE_LABEL) as CardType[]).filter((t) => (t === "flow") === (card.type === "flow")).map((t) => [t, TYPE_LABEL[t]])} />
       </Field>
+      {(card.type === "flow" || card.type === "hub") && <Field label="Название" hint={card.type === "flow" ? "Двойной щелчок по карточке открывает содержимое. Внутренние концы автоматически ведут на выходы этой карточки." : "Показывается на карточке и в списке целей перехода."}>
+        <Text value={card.text ?? ""} placeholder={card.type === "flow" ? "Новая вложенность" : "Новый хаб"} onChange={(v) => set("text", v)} />
+      </Field>}
 
       {canvas.start === card.id ? (
         <div className="start-note">
@@ -896,8 +962,8 @@ function CardProps({ card, canvas, canvasKey, project }: { card: Card; canvas: C
       )}
 
       {card.type === "jump" && (
-        <Field label="Цель перехода" hint="файл, файл.точка_входа или файл.id_карточки; Ctrl+щелчок по карточке — перейти">
-          <Combobox mono value={card.target ?? ""} options={targets} placeholder="advisor или advisor.office" onChange={(v) => set("target", v)} />
+        <Field label="Цель перехода" hint="Файл, точка входа или любая карточка, включая хабы и содержимое вложенностей. Ctrl+щелчок по переходу — открыть цель.">
+          <Combobox mono value={card.target ?? ""} options={targets} placeholder="Выберите файл или карточку" onChange={(v) => set("target", v)} />
         </Field>
       )}
 
@@ -926,19 +992,15 @@ function CardProps({ card, canvas, canvasKey, project }: { card: Card; canvas: C
 
       {incoming.length > 0 && (
         <Field label="Кто ссылается">
-          <ul className="tree">
-            {incoming.map(({ key, canvas: c, card: from }) => (
-              <li key={key + from.id} onClick={() => focusCard(key, from.id)}>
-                <span className="muted">{c.title} ·</span> {from.text || from.menuText || TYPE_LABEL[from.type]} <span className="mono muted">{from.id}</span>
-              </li>
-            ))}
+          <ul className="tree compact-refs">
+            {incoming.map(({ key, card: from }) => {
+              const speaker = project.entities.find((e) => e.id === from.speaker);
+              return <li key={key + from.id} onClick={() => focusCard(key, from.id)} title={from.id}>
+                <span className="swatch" style={{ background: speaker?.color ?? "var(--service)" }} />
+                {speaker?.name ?? TYPE_LABEL[from.type]}
+              </li>;
+            })}
           </ul>
-        </Field>
-      )}
-
-      {ink && (
-        <Field label="Сгенерированный ink">
-          <pre className="ink-preview">{ink}</pre>
         </Field>
       )}
     </div>
@@ -1076,6 +1138,9 @@ function MultiCardProps({ canvas, selection, project }: { canvas: Canvas; select
         <Field label="Входной пин — условие" hint={condition === MIXED ? "у карточек разные условия — ввод заменит их все" : undefined}>
           <input
             className="mono"
+          spellCheck={false}
+          autoCapitalize="off"
+          autoCorrect="off"
             value={condition === MIXED ? "" : condition}
             placeholder={condition === MIXED ? "— разные —" : ""}
             onChange={(e) => setAll("condition", e.target.value, (c) => c.type !== "condition")}
@@ -1085,6 +1150,9 @@ function MultiCardProps({ canvas, selection, project }: { canvas: Canvas; select
       <Field label="Добавить тег всем" hint="ключ: значение, Enter">
         <input
           className="mono"
+          spellCheck={false}
+          autoCapitalize="off"
+          autoCorrect="off"
           placeholder="voice: whisper"
           onKeyDown={(e) => {
             if (e.key !== "Enter") return;
@@ -1117,6 +1185,9 @@ function TagsEditor({ tags, onChange }: { tags: Record<string, string>; onChange
   return (
     <textarea
       className="mono"
+          spellCheck={false}
+          autoCapitalize="off"
+          autoCorrect="off"
       rows={2}
       value={text}
       onChange={(e) => setText(e.target.value)}
@@ -1157,7 +1228,7 @@ function CanvasProps({ canvas, canvasKey, project }: { canvas: Canvas; canvasKey
         label="Имя файла и узла ink"
         hint={!isValidInkName(id) ? <span className="bad">только латиница, цифры и _</span> : idTaken ? <span className="bad">имя занято</span> : "переходы в этот файл обновятся сами"}
       >
-        <input className="mono" value={id} onChange={(e) => setId(e.target.value)} onBlur={applyId} onKeyDown={(e) => e.key === "Enter" && applyId()} />
+        <input className="mono" spellCheck={false} autoCapitalize="off" autoCorrect="off" value={id} onChange={(e) => setId(e.target.value)} onBlur={applyId} onKeyDown={(e) => e.key === "Enter" && applyId()} />
       </Field>
       <Field label="Папка" hint="для порядка в списке файлов; на ink не влияет">
         <Combobox
@@ -1212,7 +1283,7 @@ function ProjectProps({ project }: { project: Project }) {
   );
 }
 
-function EntityProps({ entity, project }: { entity: Entity; project: Project }) {
+export function EntityProps({ entity, project }: { entity: Entity; project: Project }) {
   const { edit, selectEntity } = useStore.getState();
   const set = <K extends keyof Entity>(field: K, value: Entity[K]) =>
     edit((p) => {
@@ -1221,7 +1292,7 @@ function EntityProps({ entity, project }: { entity: Entity; project: Project }) 
       if (field === "isPlayer" && value) for (const other of p.entities) other.isPlayer = undefined;
       e[field] = value;
     });
-  const uses = Object.values(project.canvases).reduce((n, c) => n + c.cards.filter((x) => x.speaker === entity.id).length, 0);
+  const uses = Object.values(project.canvases).reduce((n, c) => n + flowCards(c).filter((x) => x.card.speaker === entity.id).length, 0);
   return (
     <div className="props">
       <div className="props-title">
@@ -1318,7 +1389,7 @@ export function BottomPanel({ splitter, open, onToggle }: { splitter?: React.Rea
                   key={i}
                   className={d.severity}
                   onClick={() => {
-                    if (d.func) useStore.getState().inspectVariable("func", d.func);
+                    if (d.func) useStore.getState().inspectVariable("func", d.func, d.funcOwner);
                     else if (d.canvas && d.link) useStore.getState().focusLink(d.canvas, d.link);
                     else if (d.canvas) focusCard(d.canvas, d.card);
                   }}

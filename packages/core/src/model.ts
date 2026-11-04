@@ -5,6 +5,7 @@ export type CardType =
   | "hub" // стежок без текста, цикл расспросов
   | "condition" // да / нет
   | "jump" // переход на другой холст
+  | "flow" // именованная вложенность с автоматическими входом и выходами
   | "ink"; // чистый ink
 
 export type Repeat = "once" | "sticky" | "fallback";
@@ -30,6 +31,8 @@ export interface Card {
   note?: string;
   /** jump: "canvas", "canvas.entry_name" или "canvas.cardId" */
   target?: string;
+  /** организационный внутренний поток; компилируется в тот же файл, что и карточка */
+  flow?: Canvas;
 }
 
 export type LinkKind = "divert";
@@ -114,12 +117,18 @@ export interface Variable {
   type: VarType;
   default: number | boolean | string;
   group?: string;
+  description?: string;
+  /** id персонажа; пусто — глобальная переменная */
+  owner?: string;
 }
 
 export interface InkListDef {
   name: string;
   items: string[];
   initial: string[];
+  group?: string;
+  description?: string;
+  owner?: string;
 }
 
 /** Функция ink: `=== function name(params) ===` с телом. */
@@ -130,6 +139,8 @@ export interface InkFunction {
   body: string;
   group?: string;
   description?: string;
+  /** id персонажа; пусто — глобальная функция */
+  owner?: string;
   /** функцию реализует игра (EXTERNAL); тело — запасной вариант для Inky и проверок */
   external?: boolean;
 }

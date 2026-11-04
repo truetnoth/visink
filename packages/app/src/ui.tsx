@@ -6,62 +6,54 @@ import type { Project } from "@visink/core";
 import type { SuggestResult, Suggestion } from "./suggest";
 import { applySuggestion, suggest } from "./suggest";
 
-/** Кнопка-иконка: подпись показывается подсказкой при наведении. */
-export function IconButton({
-  icon: Icon,
-  label,
-  onClick,
-  disabled,
-  primary,
-  badge,
-  className = "",
-}: {
+/** Подсказка в отдельном слое окна: не обрезается панелями и не создаёт полос прокрутки. */
+function Tooltip({ label, anchor }: { label: string; anchor: DOMRect }) {
+  const width = Math.min(window.innerWidth - 16, Math.max(40, label.length * 6.6 + 16));
+  const left = Math.max(8, Math.min(anchor.left + anchor.width / 2 - width / 2, window.innerWidth - width - 8));
+  const below = anchor.bottom + 7;
+  const top = below + 36 > window.innerHeight ? Math.max(8, anchor.top - 34) : below;
+  return createPortal(<div className="tooltip" role="tooltip" style={{ left, top, maxWidth: window.innerWidth - 16 }}>{label}</div>, document.body);
+}
+
+export function IconButton({ icon: Icon, label, onClick, disabled, primary, badge, className = "" }: {
   icon: LucideIcon;
   label: string;
   onClick: () => void;
   disabled?: boolean;
   primary?: boolean;
-  /** маленькая точка или число в углу */
   badge?: string | number | boolean;
   className?: string;
 }) {
-  return (
-    <button
-      type="button"
-      className={`icon-btn ${primary ? "primary" : ""} ${className}`}
-      data-tip={label}
-      aria-label={label}
-      onClick={onClick}
-      disabled={disabled}
-    >
+  const [anchor, setAnchor] = useState<DOMRect | null>(null);
+  const show = (element: HTMLButtonElement) => setAnchor(element.getBoundingClientRect());
+  return <>
+    <button type="button" className={`icon-btn ${primary ? "primary" : ""} ${className}`} aria-label={label} onClick={() => { setAnchor(null); onClick(); }} disabled={disabled} onMouseEnter={(e) => show(e.currentTarget)} onMouseLeave={() => setAnchor(null)} onPointerLeave={() => setAnchor(null)} onFocus={(e) => show(e.currentTarget)} onBlur={() => setAnchor(null)}>
       <Icon size={16} strokeWidth={2} />
       {badge ? <span className="icon-badge">{badge === true ? "" : badge}</span> : null}
     </button>
-  );
+    {anchor && <Tooltip label={label} anchor={anchor} />}
+  </>;
 }
 
 // ───────────── размеры панелей ─────────────
 
 export interface PanelSizes {
   left: number;
-  right: number;
   dock: number;
 }
 
 export interface PanelsOpen {
   showLeft: boolean;
-  showRight: boolean;
   showDock: boolean;
 }
 
 const SIZES_KEY = "visink-panels";
-export const DEFAULT_SIZES: PanelSizes = { left: 260, right: 320, dock: 220 };
-export const MIN_SIZES: PanelSizes = { left: 220, right: 300, dock: 120 };
-/** холст не уже этого — ограничивает боковые панели */
+export const DEFAULT_SIZES: PanelSizes = { left: 260, dock: 220 };
+export const MIN_SIZES: PanelSizes = { left: 220, dock: 120 };
 const MIN_CANVAS = 320;
 const MIN_CANVAS_HEIGHT = 200;
 
-const DEFAULT_OPEN: PanelsOpen = { showLeft: true, showRight: true, showDock: true };
+const DEFAULT_OPEN: PanelsOpen = { showLeft: true, showDock: true };
 
 function readSizes(): PanelSizes & PanelsOpen {
   try {
@@ -72,7 +64,7 @@ function readSizes(): PanelSizes & PanelsOpen {
   }
 }
 
-/** Ширины боковых панелей, высота нижней и какие из них открыты — с запоминанием между сессиями. */
+/** Ширина дерева и высота нижней панели — с запоминанием между сессиями. */
 export function usePanelSizes() {
   const [sizes, setSizes] = useState<PanelSizes & PanelsOpen>(readSizes);
   useEffect(() => {
@@ -84,13 +76,9 @@ export function usePanelSizes() {
   }, [sizes]);
 
   const clamp = useCallback((next: PanelSizes & PanelsOpen): PanelSizes & PanelsOpen => {
-    const w = window.innerWidth;
-    const h = window.innerHeight;
-    const otherRight = next.showRight ? next.right : 0;
-    const left = Math.max(MIN_SIZES.left, Math.min(next.left, w - otherRight - MIN_CANVAS));
-    const right = Math.max(MIN_SIZES.right, Math.min(next.right, w - (next.showLeft ? left : 0) - MIN_CANVAS));
-    const dock = Math.max(MIN_SIZES.dock, Math.min(next.dock, h - MIN_CANVAS_HEIGHT));
-    return { ...next, left, right, dock };
+    const left = Math.max(MIN_SIZES.left, Math.min(next.left, window.innerWidth - MIN_CANVAS));
+    const dock = Math.max(MIN_SIZES.dock, Math.min(next.dock, window.innerHeight - MIN_CANVAS_HEIGHT));
+    return { ...next, left, dock };
   }, []);
 
   const resize = useCallback((patch: Partial<PanelSizes>) => setSizes((s) => clamp({ ...s, ...patch })), [clamp]);
@@ -305,7 +293,7 @@ export function Combobox({
   mono,
 }: {
   value: string;
-  options: string[];
+  options: (string | Option)[];
   onChange: (v: string) => void;
   placeholder?: string;
   mono?: boolean;
@@ -313,11 +301,12 @@ export function Combobox({
   const [open, setOpen] = useState(false);
   const [active, setActive] = useState(-1);
   const input = useRef<HTMLInputElement>(null);
+  const normalized = options.map((option): Option => typeof option === "string" ? { value: option, label: option } : option);
   const q = value.trim().toLowerCase();
-  const shown = options.filter((o) => !q || (o.toLowerCase().includes(q) && o !== value)).slice(0, 50);
+  const shown = normalized.filter((option) => !q || (`${option.label} ${option.value} ${option.hint ?? ""}`.toLowerCase().includes(q) && option.value !== value)).slice(0, 50);
   const close = useCallback(() => setOpen(false), []);
-  const pick = (v: string) => {
-    onChange(v);
+  const pick = (option: Option) => {
+    onChange(option.value);
     setOpen(false);
   };
   return (
@@ -327,6 +316,9 @@ export function Combobox({
         className={mono ? "mono" : ""}
         value={value}
         placeholder={placeholder}
+        spellCheck={!mono}
+        autoCapitalize={mono ? "off" : undefined}
+        autoCorrect={mono ? "off" : undefined}
         onChange={(e) => {
           onChange(e.target.value);
           setOpen(true);
@@ -350,8 +342,8 @@ export function Combobox({
       />
       {open && shown.length > 0 && input.current && (
         <Popup anchor={input.current} onClose={close}>
-          {shown.map((o, i) => (
-            <OptionRow key={o} option={{ value: o, label: o }} active={i === active} selected={false} onPick={() => pick(o)} onHover={() => setActive(i)} />
+          {shown.map((option, i) => (
+            <OptionRow key={option.value} option={option} active={i === active} selected={option.value === value} onPick={() => pick(option)} onHover={() => setActive(i)} />
           ))}
         </Popup>
       )}
@@ -404,6 +396,8 @@ export function CodeInput({
     value,
     placeholder,
     spellCheck: false,
+    autoCapitalize: "off",
+    autoCorrect: "off",
     onChange: (e: React.ChangeEvent<HTMLTextAreaElement & HTMLInputElement>) => {
       onChange(e.target.value);
       update(e.target.value, e.target.selectionStart ?? e.target.value.length);

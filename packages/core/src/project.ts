@@ -33,6 +33,10 @@ export function createCard(id: string, type: CardType, init: Partial<Card> = {})
     card.status ??= "draft";
   }
   if (type === "ink") card.text ??= "";
+  if (type === "flow") {
+    card.text ??= "Новая вложенность";
+    card.flow ??= createCanvas(`flow_${id}`, card.text);
+  }
   return card;
 }
 
@@ -140,9 +144,43 @@ function stripLegacy(card: LegacyCard): LegacyCard {
   return rest;
 }
 
+export type FlowPath = string[];
+
+/** Вложенный поток по пути id карточек от корневого файла. */
+export function canvasAtPath(root: Canvas, path: FlowPath = []): Canvas | undefined {
+  let canvas = root;
+  for (const id of path) {
+    const next = canvas.cards.find((c) => c.id === id)?.flow;
+    if (!next) return undefined;
+    canvas = next;
+  }
+  return canvas;
+}
+
+export interface FlowCard {
+  canvas: Canvas;
+  card: Card;
+  path: FlowPath;
+}
+
+/** Все карточки корневого файла, включая внутренние потоки. */
+export function flowCards(root: Canvas): FlowCard[] {
+  const out: FlowCard[] = [];
+  const visit = (canvas: Canvas, path: FlowPath) => {
+    for (const card of canvas.cards) {
+      out.push({ canvas, card, path });
+      if (card.flow) visit(card.flow, [...path, card.id]);
+    }
+  };
+  visit(root, []);
+  return out;
+}
+
 function normalizeCanvas(raw: Partial<Canvas> & { cards?: LegacyCard[] }): Canvas {
   const graveyard = [...(raw.graveyard ?? [])];
-  const { cards, links } = migrateCards(raw.cards ?? [], raw.links ?? [], graveyard);
+  const migrated = migrateCards(raw.cards ?? [], raw.links ?? [], graveyard);
+  const cards = migrated.cards.map((card) => card.flow ? { ...card, flow: normalizeCanvas(card.flow) } : card);
+  const links = migrated.links;
   const layout = Object.fromEntries(Object.entries(raw.layout ?? {}).filter(([id]) => cards.some((c) => c.id === id)));
   // проекты до явного начала файла: начало — то, с чего файл и так начинался
   const start = raw.start && cards.some((c) => c.id === raw.start) ? raw.start : guessStart({ cards, links, layout })?.id;
@@ -162,6 +200,12 @@ function normalizeCanvas(raw: Partial<Canvas> & { cards?: LegacyCard[] }): Canva
   };
 }
 
+function migrateFlowLogic(canvas: Canvas, project: Pick<Project, "entities">): Canvas {
+  migrateLinkLogic(canvas, project);
+  for (const card of canvas.cards) if (card.flow) migrateFlowLogic(card.flow, project);
+  return canvas;
+}
+
 export async function loadProject(fs: ProjectFs): Promise<Project> {
   const settingsText = await fs.readText("project.json");
   if (settingsText == null) throw new Error("В папке нет project.json — это не проект Visink");
@@ -171,7 +215,7 @@ export async function loadProject(fs: ProjectFs): Promise<Project> {
   const canvases: Record<string, Canvas> = {};
   for (const file of await fs.listFiles("canvases")) {
     if (!file.endsWith(CANVAS_SUFFIX)) continue;
-    const canvas = migrateLinkLogic(normalizeCanvas(JSON.parse((await fs.readText(file)) ?? "{}")), { entities });
+    const canvas = migrateFlowLogic(normalizeCanvas(JSON.parse((await fs.readText(file)) ?? "{}")), { entities });
     canvases[canvasPath(canvas)] = canvas;
   }
   return {

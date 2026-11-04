@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { checkProject } from "@visink/checker";
+import { createCard } from "@visink/core";
 import { demoProject } from "../../checker/test/fixtures";
-import { addCanvas, alignToGrid, copyFragment, deleteCards, parseFragment, pasteFragment, renameVariable, replaceIdent, snapPoint, variableUsages } from "../src/ops";
+import { addCanvas, addNestedFlow, alignToGrid, copyFragment, deleteCards, jumpTargets, parseFragment, pasteFragment, renameVariable, replaceIdent, snapPoint, variableUsages } from "../src/ops";
 import { searchProject } from "../src/search";
 
 describe("переменные", () => {
@@ -132,5 +133,66 @@ describe("сетка", () => {
     dean.layout.c1 = { x: 13, y: 47, w: 291 };
     alignToGrid(dean, 20);
     expect(dean.layout.c1).toEqual({ x: 20, y: 40, w: 300 });
+  });
+});
+
+describe("вложенные потоки и области имён", () => {
+  it("копирование карточки клонирует весь внутренний поток и переназначает id", () => {
+    const p = demoProject();
+    const dean = p.canvases.dean;
+    const nested = addNestedFlow(dean, "c1");
+    nested.cards = [
+      createCard("nested_a", "line", { speaker: "ent_dean", text: "А" }),
+      createCard("nested_b", "line", { speaker: "ent_dean", text: "Б" }),
+    ];
+    nested.links = [{ from: "nested_a", to: "nested_b", order: 0, kind: "divert" }];
+    nested.layout = { nested_a: { x: 0, y: 0 }, nested_b: { x: 320, y: 0 } };
+    nested.start = "nested_a";
+    const fragment = copyFragment(dean, ["c1"])!;
+    const [id] = pasteFragment(p, dean, fragment);
+    const copy = dean.cards.find((c) => c.id === id)!;
+    expect(copy.flow).toBeDefined();
+    expect(copy.flow!.cards.map((c) => c.text)).toEqual(["А", "Б"]);
+    expect(copy.flow!.cards.some((c) => ["nested_a", "nested_b"].includes(c.id))).toBe(false);
+    const ids = copy.flow!.cards.map((c) => c.id);
+    expect(copy.flow!.links[0]).toMatchObject({ from: ids[0], to: ids[1] });
+    expect(copy.flow!.start).toBe(ids[0]);
+    expect(checkProject(p).diagnostics.filter((d) => d.severity === "error")).toEqual([]);
+  });
+
+  it("цели jump включают реплики, хабы и карточки внутри вложенностей", () => {
+    const p = demoProject();
+    const nested = addNestedFlow(p.canvases.dean, "c1");
+    nested.cards = [
+      createCard("nested_hub", "hub"),
+      createCard("nested_flow", "flow", { text: "Внутренняя глава" }),
+      createCard("nested_line", "line", { speaker: "ent_dean", text: "Скрытая реплика" }),
+    ];
+    const targets = jumpTargets(p);
+    expect(targets.map((target) => target.value)).toEqual(expect.arrayContaining(["dean", "dean.c1", "dean.nested_hub", "dean.nested_flow", "dean.nested_line"]));
+    expect(targets.find((target) => target.value === "dean.nested_line")).toMatchObject({ label: "Скрытая реплика · nested_line", hint: "Декан · внутри вложенности · Реплика" });
+  });
+
+  it("поиск, подсказки, использования и rename различают владельцев", async () => {
+    const { suggest } = await import("../src/suggest");
+    const p = demoProject();
+    p.variables.vars.push(
+      { name: "trust", owner: "ent_dean", type: "int", default: 1 },
+      { name: "trust", owner: "ent_advisor", type: "int", default: 2 },
+    );
+    p.variables.functions.push(
+      { name: "can_start", owner: "ent_dean", params: [], body: "~ return trust > 0" },
+      { name: "can_start", owner: "ent_advisor", params: [], body: "~ return trust > 1" },
+    );
+    p.canvases.dean.cards.find((c) => c.id === "c1")!.action = "ent_dean.trust += 1";
+    p.canvases.advisor.cards.find((c) => c.id === "a1")!.action = "ent_advisor.trust += 1";
+    expect(variableUsages(p, "trust", "ent_dean").map((u) => `${u.key}:${u.card ?? u.func}`)).toEqual([":can_start", "dean:c1"]);
+    expect(searchProject(p, "ent_advisor.trust").get("var")!.map((h) => [h.id, h.owner])).toEqual([["trust", "ent_advisor"]]);
+    expect(suggest("ent_dean.", 9, p)!.items.map((s) => s.insert)).toEqual(expect.arrayContaining(["ent_dean.trust", "ent_dean.can_start()"]));
+    renameVariable(p, "trust", "rapport", "ent_advisor");
+    expect(p.canvases.dean.cards.find((c) => c.id === "c1")!.action).toBe("ent_dean.trust += 1");
+    expect(p.canvases.advisor.cards.find((c) => c.id === "a1")!.action).toBe("ent_advisor.rapport += 1");
+    expect(p.variables.functions.find((f) => f.owner === "ent_advisor")!.body).toBe("~ return rapport > 1");
+    expect(p.variables.functions.find((f) => f.owner === "ent_dean")!.body).toBe("~ return trust > 0");
   });
 });

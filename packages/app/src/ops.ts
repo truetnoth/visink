@@ -1,6 +1,6 @@
 // Операции правки проекта. Все мутируют черновик (копию), store сам делает копию и пишет историю.
 import type { Canvas, Card, CardType, Link, Note, Point, Project } from "@visink/core";
-import { canvasPath, createCanvas, createCard, guessStart, isPlayerCard, newCardId, newNoteId, toInkName } from "@visink/core";
+import { canvasPath, createCanvas, createCard, flowCards, guessStart, isPlayerCard, newCardId, newNoteId, toInkName } from "@visink/core";
 
 export const CARD_W = 280;
 export const COL = 360;
@@ -11,7 +11,9 @@ export const ROW = 200;
 const GRID_STEP = 20;
 
 function takenIds(canvas: Canvas): string[] {
-  return [...canvas.cards.map((c) => c.id), ...canvas.graveyard, ...canvas.notes.map((n) => n.id)];
+  const out = [...canvas.cards.map((c) => c.id), ...canvas.graveyard, ...canvas.notes.map((n) => n.id)];
+  for (const card of canvas.cards) if (card.flow) out.push(...takenIds(card.flow));
+  return out;
 }
 
 /** Порядок стрелок из карточки = порядок целей сверху вниз. */
@@ -28,17 +30,24 @@ export function reorderLinks(canvas: Canvas) {
   }
 }
 
-export function addCard(canvas: Canvas, type: CardType, at: Point, init: Partial<Card> = {}): Card {
-  const card = createCard(newCardId(takenIds(canvas)), type, init);
+export function addCard(canvas: Canvas, type: CardType, at: Point, init: Partial<Card> = {}, root = canvas): Card {
+  const card = createCard(newCardId(takenIds(root)), type, init);
   canvas.cards.push(card);
   canvas.layout[card.id] = { x: Math.round(at.x), y: Math.round(at.y) };
   return card;
 }
 
-export function addNote(canvas: Canvas, at: Point) {
-  const note = { id: newNoteId(takenIds(canvas)), text: "Заметка", x: Math.round(at.x), y: Math.round(at.y) };
+export function addNote(canvas: Canvas, at: Point, root = canvas) {
+  const note = { id: newNoteId(takenIds(root)), text: "Заметка", x: Math.round(at.x), y: Math.round(at.y) };
   canvas.notes.push(note);
   return note;
+}
+
+export function addNestedFlow(canvas: Canvas, cardId: string): Canvas {
+  const card = canvas.cards.find((c) => c.id === cardId);
+  if (!card) throw new Error("Карточка не найдена");
+  if (!card.flow) card.flow = createCanvas(`${canvas.id}_${card.id}`, "Вложенный поток");
+  return card.flow;
 }
 
 export function connect(canvas: Canvas, from: string, to: string, port?: "yes" | "no") {
@@ -124,7 +133,7 @@ export function parseFragment(text: string): Fragment | null {
  * Вставляет кусок с новыми id. at — куда встанет левый верхний угол куска;
  * без него — со сдвигом от оригинала. Возвращает id вставленного.
  */
-export function pasteFragment(project: Project, canvas: Canvas, fragment: Fragment, at?: Point, grid = 1): string[] {
+export function pasteFragment(project: Project, canvas: Canvas, fragment: Fragment, at?: Point, grid = 1, root = canvas): string[] {
   const corners = [...fragment.cards.map((c) => fragment.layout[c.id] ?? { x: 0, y: 0 }), ...fragment.notes];
   const minX = Math.min(...corners.map((p) => p.x));
   const minY = Math.min(...corners.map((p) => p.y));
@@ -132,19 +141,47 @@ export function pasteFragment(project: Project, canvas: Canvas, fragment: Fragme
   const move = (p: Point) => snapPoint({ x: p.x - minX + target.x, y: p.y - minY + target.y }, grid);
   const npc = defaultNpc(project, canvas);
   const ids = new Map<string, string>();
-  for (const src of fragment.cards) {
-    const { id: _id, entry: _entry, ...rest } = structuredClone(src);
+  const topIds: string[] = [];
+
+  const cloneCard = (src: Card, dest: Canvas, nested: boolean): Card => {
+    const { id: _id, entry: _entry, flow, ...rest } = structuredClone(src);
     if (rest.speaker && !project.entities.some((e) => e.id === rest.speaker)) rest.speaker = npc;
-    const card = createCard(newCardId(takenIds(canvas)), src.type, rest);
-    canvas.cards.push(card);
-    const p = fragment.layout[src.id] ?? { x: minX, y: minY };
-    canvas.layout[card.id] = { ...move(p), ...(p.w != null ? { w: p.w } : {}), ...(p.h != null ? { h: p.h } : {}) };
+    const card = createCard(newCardId(takenIds(root)), src.type, rest);
     ids.set(src.id, card.id);
-  }
+    dest.cards.push(card);
+    const p = fragment.layout[src.id] ?? { x: minX, y: minY };
+    dest.layout[card.id] = nested ? { x: 0, y: 0 } : { ...move(p), ...(p.w != null ? { w: p.w } : {}), ...(p.h != null ? { h: p.h } : {}) };
+    if (flow) card.flow = cloneCanvas(flow);
+    return card;
+  };
+
+  const cloneCanvas = (src: Canvas): Canvas => {
+    const dest = createCanvas(src.id, src.title);
+    dest.owner = src.owner;
+    for (const srcCard of src.cards) {
+      const card = cloneCard(srcCard, dest, true);
+      dest.layout[card.id] = structuredClone(src.layout[srcCard.id] ?? { x: 0, y: 0 });
+    }
+    for (const srcNote of src.notes) {
+      const note = { ...structuredClone(srcNote), id: newNoteId(takenIds(root)) };
+      ids.set(srcNote.id, note.id);
+      dest.notes.push(note);
+    }
+    dest.links = src.links.flatMap((l) => {
+      const from = ids.get(l.from);
+      const to = ids.get(l.to);
+      return from && to ? [{ ...structuredClone(l), from, to }] : [];
+    });
+    dest.start = src.start ? ids.get(src.start) : undefined;
+    return dest;
+  };
+
+  for (const src of fragment.cards) topIds.push(cloneCard(src, canvas, false).id);
   for (const src of fragment.notes) {
-    const note = { id: newNoteId(takenIds(canvas)), text: src.text, ...move(src) };
+    const note = { id: newNoteId(takenIds(root)), text: src.text, ...move(src) };
     canvas.notes.push(note);
     ids.set(src.id, note.id);
+    topIds.push(note.id);
   }
   for (const l of fragment.links) {
     const from = ids.get(l.from);
@@ -153,7 +190,7 @@ export function pasteFragment(project: Project, canvas: Canvas, fragment: Fragme
   }
   if (!canvas.start) canvas.start = guessStart(canvas)?.id;
   reorderLinks(canvas);
-  return [...ids.values()];
+  return topIds;
 }
 
 /** Главный NPC холста: владелец, иначе первый персонаж не-игрок. */
@@ -190,18 +227,18 @@ export function nextSpeaker(project: Project, canvas: Canvas, from: Card): strin
 }
 
 /** Enter: новая реплика справа от выделенной. */
-export function addNextLine(project: Project, canvas: Canvas, fromId: string): Card | null {
+export function addNextLine(project: Project, canvas: Canvas, fromId: string, root = canvas): Card | null {
   const from = canvas.cards.find((c) => c.id === fromId);
   if (!from) return null;
   const at = canvas.layout[fromId] ?? { x: 0, y: 0 };
   const siblings = canvas.links.filter((l) => l.from === fromId).length;
-  const card = addCard(canvas, "line", { x: at.x + (at.w ?? CARD_W) + GAP, y: at.y + siblings * ROW }, { speaker: nextSpeaker(project, canvas, from) });
+  const card = addCard(canvas, "line", { x: at.x + (at.w ?? CARD_W) + GAP, y: at.y + siblings * ROW }, { speaker: nextSpeaker(project, canvas, from) }, root);
   connect(canvas, fromId, card.id);
   return card;
 }
 
 /** Tab: ещё один вариант выбора игрока. */
-export function addPlayerOption(project: Project, canvas: Canvas, selectedId: string): Card | null {
+export function addPlayerOption(project: Project, canvas: Canvas, selectedId: string, root = canvas): Card | null {
   const selected = canvas.cards.find((c) => c.id === selectedId);
   const player = project.entities.find((e) => e.isPlayer);
   if (!selected || !player) return null;
@@ -210,7 +247,7 @@ export function addPlayerOption(project: Project, canvas: Canvas, selectedId: st
   const options = canvas.links.filter((l) => l.from === parentId).map((l) => canvas.layout[l.to]).filter(Boolean);
   const parentAt = canvas.layout[parentId] ?? { x: 0, y: 0 };
   const y = options.length ? Math.max(...options.map((p) => p.y)) + ROW : parentAt.y;
-  const card = addCard(canvas, "line", { x: parentAt.x + (parentAt.w ?? CARD_W) + GAP, y }, { speaker: player.id });
+  const card = addCard(canvas, "line", { x: parentAt.x + (parentAt.w ?? CARD_W) + GAP, y }, { speaker: player.id }, root);
   connect(canvas, parentId, card.id);
   return card;
 }
@@ -239,7 +276,7 @@ export function renameCanvas(project: Project, key: string, patch: { id?: string
   const fix = (t: string) => (t === oldId ? newId : t.startsWith(oldId + ".") ? newId + t.slice(oldId.length) : t);
   if (newId !== oldId) {
     for (const c of Object.values(project.canvases)) {
-      for (const card of c.cards) if (card.type === "jump" && card.target) card.target = fix(card.target);
+      for (const { card } of flowCards(c)) if (card.type === "jump" && card.target) card.target = fix(card.target);
     }
     if (project.settings.start) project.settings.start = fix(project.settings.start);
   }
@@ -250,14 +287,28 @@ export function renameCanvas(project: Project, key: string, patch: { id?: string
   return newKey;
 }
 
-/** Все цели переходов в проекте: холст, его точки входа. Для подсказок в поле «цель». */
-export function jumpTargets(project: Project): string[] {
-  const out: string[] = [];
+export interface JumpTarget {
+  value: string;
+  label: string;
+  hint?: string;
+}
+
+const TARGET_TYPE: Record<CardType, string> = { line: "Реплика", hub: "Хаб", condition: "Условие", jump: "Переход", flow: "Вложенность", ink: "Ink" };
+
+/** Файлы, точки входа и любые карточки, включая содержимое вложенностей. */
+export function jumpTargets(project: Project): JumpTarget[] {
+  const out: JumpTarget[] = [];
   for (const c of Object.values(project.canvases)) {
-    out.push(c.id);
-    for (const card of c.cards) if (card.entry) out.push(`${c.id}.${card.entry}`);
+    out.push({ value: c.id, label: c.title, hint: `Файл · ${c.id}` });
+    for (const { card, path } of flowCards(c)) {
+      if (card.entry) out.push({ value: `${c.id}.${card.entry}`, label: `Вход: ${card.entry}`, hint: c.title });
+      const kind = TARGET_TYPE[card.type];
+      const name = card.menuText || card.text || card.condition || (card.type === "jump" ? card.target : "") || kind;
+      const place = path.length ? `${c.title} · внутри вложенности` : c.title;
+      out.push({ value: `${c.id}.${card.id}`, label: `${name} · ${card.id}`, hint: `${place} · ${kind}` });
+    }
   }
-  return out.sort();
+  return out.sort((a, b) => a.label.localeCompare(b.label) || a.value.localeCompare(b.value));
 }
 
 // ───────────── переменные ─────────────
@@ -284,56 +335,88 @@ export function mentions(expr: string | undefined, name: string): boolean {
   return expr.split(/"[^"]*"/).some((part) => re.test(part));
 }
 
+export const logicalName = (item: { name: string; owner?: string }) => item.owner ? `${item.owner}.${item.name}` : item.name;
+
 export interface Usage {
   /** файл; у функций — пусто */
   key: string;
+  path?: string[];
   card?: string;
   link?: { from: string; to: string; port?: "yes" | "no" };
   /** использование в теле функции */
   func?: string;
+  funcOwner?: string;
+}
+
+function hasLocal(project: Project, owner: string | undefined, name: string): boolean {
+  if (!owner) return false;
+  const { vars, lists, functions } = project.variables;
+  return [...vars, ...lists, ...functions].some((x) => x.owner === owner && x.name === name);
+}
+
+function usageMentions(project: Project, expr: string | undefined, name: string, owner?: string, functionOwner?: string, params: string[] = []): boolean {
+  if (owner) {
+    return mentions(expr, `${owner}.${name}`) || (functionOwner === owner && !params.includes(name) && mentions(expr, name));
+  }
+  return !params.includes(name) && !hasLocal(project, functionOwner, name) && mentions(expr, name);
 }
 
 /** Где в проекте встречается имя переменной, списка или функции: условия, действия, чистый ink, тела функций. */
-export function variableUsages(project: Project, name: string): Usage[] {
+export function variableUsages(project: Project, name: string, owner?: string): Usage[] {
   const out: Usage[] = [];
   for (const f of project.variables.functions) {
-    if (f.name !== name && !f.params.includes(name) && mentions(f.body, name)) out.push({ key: "", func: f.name });
+    if (f.name === name && f.owner === owner) continue;
+    if (usageMentions(project, f.body, name, owner, f.owner, f.params)) out.push({ key: "", func: f.name, funcOwner: f.owner });
   }
   for (const [key, c] of Object.entries(project.canvases)) {
-    for (const card of c.cards) {
-      if (mentions(card.condition, name) || mentions(card.action, name) || (card.type === "ink" && mentions(card.text, name))) {
-        out.push({ key, card: card.id });
+    for (const { canvas, card, path } of flowCards(c)) {
+      if (mentions(card.condition, owner ? `${owner}.${name}` : name) || mentions(card.action, owner ? `${owner}.${name}` : name) || (card.type === "ink" && mentions(card.text, owner ? `${owner}.${name}` : name))) {
+        out.push({ key, path, card: card.id });
       }
     }
-    for (const l of c.links) {
-      if (mentions(l.condition, name) || mentions(l.action, name)) out.push({ key, link: { from: l.from, to: l.to, ...(l.port ? { port: l.port } : {}) } });
-    }
+    const visitLinks = (flow: Canvas, path: string[]) => {
+      for (const l of flow.links) {
+        if (mentions(l.condition, owner ? `${owner}.${name}` : name) || mentions(l.action, owner ? `${owner}.${name}` : name)) out.push({ key, path, link: { from: l.from, to: l.to, ...(l.port ? { port: l.port } : {}) } });
+      }
+      for (const card of flow.cards) if (card.flow) visitLinks(card.flow, [...path, card.id]);
+    };
+    visitLinks(c, []);
   }
   return out;
 }
 
-/** Переименовывает переменную, список или функцию и все упоминания: условия, действия, чистый ink, тела функций. */
-export function renameVariable(project: Project, from: string, to: string) {
+/** Переименовывает переменную, список или функцию и все упоминания в той же области. */
+export function renameVariable(project: Project, from: string, to: string, owner?: string) {
   if (from === to) return;
-  const v = project.variables.vars.find((x) => x.name === from);
+  const match = (x: { name: string; owner?: string }) => x.name === from && x.owner === owner;
+  const v = project.variables.vars.find(match);
   if (v) v.name = to;
-  const l = project.variables.lists.find((x) => x.name === from);
+  const l = project.variables.lists.find(match);
   if (l) l.name = to;
-  const fn = project.variables.functions.find((x) => x.name === from);
+  const fn = project.variables.functions.find(match);
   if (fn) fn.name = to;
-  for (const f of project.variables.functions) {
-    // параметр с тем же именем перекрывает глобальное — внутри такой функции не трогаем
-    if (!f.params.includes(from)) f.body = replaceIdent(f.body, from, to);
-  }
+  const renameExpr = (expr: string, localOwner?: string, params: string[] = []) => {
+    if (owner) {
+      let out = replaceIdent(expr, `${owner}.${from}`, `${owner}.${to}`);
+      if (localOwner === owner && !params.includes(from)) out = replaceIdent(out, from, to);
+      return out;
+    }
+    return params.includes(from) || hasLocal(project, localOwner, from) ? expr : replaceIdent(expr, from, to);
+  };
+  for (const f of project.variables.functions) f.body = renameExpr(f.body, f.owner, f.params);
   for (const c of Object.values(project.canvases)) {
-    for (const card of c.cards) {
-      if (card.condition) card.condition = replaceIdent(card.condition, from, to);
-      if (card.action) card.action = replaceIdent(card.action, from, to);
-      if (card.type === "ink" && card.text) card.text = replaceIdent(card.text, from, to);
+    for (const { card } of flowCards(c)) {
+      if (card.condition) card.condition = renameExpr(card.condition);
+      if (card.action) card.action = renameExpr(card.action);
+      if (card.type === "ink" && card.text) card.text = renameExpr(card.text);
     }
-    for (const link of c.links) {
-      if (link.condition) link.condition = replaceIdent(link.condition, from, to);
-      if (link.action) link.action = replaceIdent(link.action, from, to);
-    }
+    const visitLinks = (flow: Canvas) => {
+      for (const link of flow.links) {
+        if (link.condition) link.condition = renameExpr(link.condition);
+        if (link.action) link.action = renameExpr(link.action);
+      }
+      for (const card of flow.cards) if (card.flow) visitLinks(card.flow);
+    };
+    visitLinks(c);
   }
 }

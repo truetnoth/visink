@@ -1,5 +1,6 @@
 // Общий поиск по проекту: файлы, карточки, стрелки, персонажи, переменные, списки.
-import type { Project } from "@visink/core";
+import type { Canvas, Project } from "@visink/core";
+import { flowCards } from "@visink/core";
 
 export type HitKind = "file" | "card" | "link" | "entity" | "var" | "list" | "func";
 
@@ -11,10 +12,12 @@ export interface Hit {
   detail?: string;
   /** файл (ключ в project.canvases) — для карточек и стрелок */
   key?: string;
+  path?: string[];
   card?: string;
   link?: { from: string; to: string; port?: "yes" | "no" };
   /** id персонажа или имя переменной/списка */
   id?: string;
+  owner?: string;
 }
 
 export const HIT_GROUPS: { kind: HitKind; title: string }[] = [
@@ -45,7 +48,7 @@ export function searchProject(project: Project, query: string): Map<HitKind, Hit
     if (has(c.title, c.id)) push({ kind: "file", title: c.title, detail: c.id, key });
   }
   for (const [key, c] of files) {
-    for (const card of c.cards) {
+    for (const { card, path } of flowCards(c)) {
       if (!has(card.text, card.menuText, card.condition, card.action, card.id, card.entry, card.target, card.note)) continue;
       const speaker = project.entities.find((e) => e.id === card.speaker)?.name;
       push({
@@ -53,31 +56,41 @@ export function searchProject(project: Project, query: string): Map<HitKind, Hit
         title: card.text || card.menuText || card.condition || card.target || card.id,
         detail: [c.title, speaker, card.id].filter(Boolean).join(" · "),
         key,
+        path,
         card: card.id,
       });
     }
-    for (const l of c.links) {
-      if (!has(l.condition, l.action)) continue;
-      push({
-        kind: "link",
-        title: [l.condition && `{${l.condition}}`, l.action && `~ ${l.action}`].filter(Boolean).join(" "),
-        detail: `${c.title} · ${l.from} → ${l.to}`,
-        key,
-        link: { from: l.from, to: l.to, ...(l.port ? { port: l.port } : {}) },
-      });
-    }
+    const visitLinks = (flow: Canvas, path: string[]) => {
+      for (const l of flow.links) {
+        if (!has(l.condition, l.action)) continue;
+        push({
+          kind: "link",
+          title: [l.condition && `{${l.condition}}`, l.action && `~ ${l.action}`].filter(Boolean).join(" "),
+          detail: `${c.title} · ${l.from} → ${l.to}`,
+          key,
+          path,
+          link: { from: l.from, to: l.to, ...(l.port ? { port: l.port } : {}) },
+        });
+      }
+      for (const card of flow.cards) if (card.flow) visitLinks(card.flow, [...path, card.id]);
+    };
+    visitLinks(c, []);
   }
   for (const e of project.entities) {
     if (has(e.name, e.inkName, e.id)) push({ kind: "entity", title: e.name, detail: e.inkName || undefined, id: e.id });
   }
+  const entityName = (id: string | undefined) => project.entities.find((e) => e.id === id)?.name;
   for (const v of project.variables.vars) {
-    if (has(v.name, v.group, String(v.default))) push({ kind: "var", title: v.name, detail: [v.type, String(v.default), v.group].filter(Boolean).join(" · "), id: v.name });
+    const title = v.owner ? `${v.owner}.${v.name}` : v.name;
+    if (has(title, v.group, v.description, String(v.default), entityName(v.owner))) push({ kind: "var", title, detail: [v.type, String(v.default), v.group].filter(Boolean).join(" · "), id: v.name, owner: v.owner });
   }
   for (const l of project.variables.lists) {
-    if (has(l.name, ...l.items)) push({ kind: "list", title: l.name, detail: l.items.join(", "), id: l.name });
+    const title = l.owner ? `${l.owner}.${l.name}` : l.name;
+    if (has(title, ...l.items, entityName(l.owner))) push({ kind: "list", title, detail: l.items.join(", "), id: l.name, owner: l.owner });
   }
   for (const f of project.variables.functions) {
-    if (has(f.name, f.description, f.body, f.group)) push({ kind: "func", title: `${f.name}(${f.params.join(", ")})`, detail: f.description || f.group, id: f.name });
+    const title = f.owner ? `${f.owner}.${f.name}` : f.name;
+    if (has(title, f.description, f.body, f.group, entityName(f.owner))) push({ kind: "func", title: `${title}(${f.params.join(", ")})`, detail: f.description || f.group, id: f.name, owner: f.owner });
   }
   return out;
 }

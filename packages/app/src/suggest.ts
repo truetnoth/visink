@@ -30,16 +30,22 @@ function call(name: string, params: string[] | null, kind: SuggestionKind, hint?
 }
 
 /** Все возможные подсказки проекта. extra — локальные имена (параметры функции). */
-export function candidates(project: Project, extra: string[] = []): Suggestion[] {
+export function candidates(project: Project, extra: string[] = [], owner?: string): Suggestion[] {
   const out: Suggestion[] = [];
+  const name = (item: { name: string; owner?: string }) => item.owner ? `${item.owner}.${item.name}` : item.name;
+  const entityName = (id: string | undefined) => project.entities.find((e) => e.id === id)?.name;
   for (const p of extra) out.push({ kind: "param", insert: p, label: p, hint: "параметр" });
-  for (const v of project.variables.vars) out.push({ kind: "var", insert: v.name, label: v.name, hint: `${v.type} = ${String(v.default)}` });
+  for (const v of project.variables.vars) {
+    out.push({ kind: "var", insert: name(v), label: name(v), hint: `${entityName(v.owner) ?? "глобальная"} · ${v.type} = ${String(v.default)}` });
+    if (owner && v.owner === owner) out.push({ kind: "var", insert: v.name, label: v.name, hint: `свойство · ${v.type}` });
+  }
   for (const l of project.variables.lists) {
-    out.push({ kind: "list", insert: l.name, label: l.name, hint: "список" });
-    for (const i of l.items) out.push({ kind: "item", insert: `${l.name}.${i}`, label: `${l.name}.${i}`, hint: "элемент списка" });
+    out.push({ kind: "list", insert: name(l), label: name(l), hint: entityName(l.owner) ?? "список" });
+    for (const i of l.items) out.push({ kind: "item", insert: `${name(l)}.${i}`, label: `${name(l)}.${i}`, hint: "элемент списка" });
   }
   for (const f of project.variables.functions) {
-    out.push(call(f.name, f.params, "func", f.description || (f.external ? "реализует игра" : "функция")));
+    out.push(call(name(f), f.params, "func", f.description || (f.external ? "реализует игра" : entityName(f.owner) ?? "функция")));
+    if (owner && f.owner === owner) out.push(call(f.name, f.params, "func", "функция персонажа"));
   }
   for (const c of Object.values(project.canvases)) out.push({ kind: "file", insert: c.id, label: c.id, hint: `файл · ${c.title}` });
   for (const b of INK_BUILTINS) out.push(call(b, null, "builtin", "ink"));
@@ -50,14 +56,14 @@ export function candidates(project: Project, extra: string[] = []): Suggestion[]
  * Подсказки для слова под курсором. forced — вызвано Ctrl+Space: показываем и при пустом слове.
  * Внутри строки в кавычках подсказок нет.
  */
-export function suggest(text: string, caret: number, project: Project, opts: { forced?: boolean; extra?: string[] } = {}): SuggestResult | null {
+export function suggest(text: string, caret: number, project: Project, opts: { forced?: boolean; extra?: string[]; owner?: string } = {}): SuggestResult | null {
   const before = text.slice(0, caret);
   if ((before.match(/"/g)?.length ?? 0) % 2 === 1) return null;
-  const word = /[A-Za-z_][\w]*(?:\.[\w]*)?$/.exec(before)?.[0] ?? "";
+  const word = /[A-Za-z_][\w]*(?:\.[\w]*){0,2}$/.exec(before)?.[0] ?? "";
   if (!word && !opts.forced) return null;
   const after = /^[\w.]*/.exec(text.slice(caret))?.[0] ?? "";
   const q = word.toLowerCase();
-  const all = candidates(project, opts.extra);
+  const all = candidates(project, opts.extra, opts.owner);
   const starts = all.filter((s) => s.insert.toLowerCase().startsWith(q));
   const contains = q ? all.filter((s) => !s.insert.toLowerCase().startsWith(q) && s.insert.toLowerCase().includes(q)) : [];
   const items = [...starts, ...contains].slice(0, LIMIT);

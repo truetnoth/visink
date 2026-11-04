@@ -190,6 +190,24 @@ describe("проверки", () => {
     expect(codes).toContain("mixed-links:c2");
   });
 
+  it("условная реплика NPC идёт до вариантов игрока", () => {
+    const p = demoProject();
+    const dean = p.canvases.dean;
+    dean.cards.push(createCard("cy", "line", { speaker: "ent_dean", text: "Сначала ответьте.", condition: "thesis_changed" }));
+    dean.links.push({ from: "c2", to: "cy", order: -1, kind: "divert" });
+    const r = checkProject(p);
+    expect(r.diagnostics.filter((d) => d.severity === "error")).toEqual([]);
+    expect(r.build.canvases.dean.text).toContain("{thesis_changed: -> cy}");
+    const story = new Story(r.storyJson!);
+    story.ChoosePathString("dean");
+    expect(story.ContinueMaximally()).toContain("Садитесь.");
+    expect(story.currentChoices.length).toBeGreaterThan(0);
+    const conditional = new Story(r.storyJson!);
+    conditional.variablesState["thesis_changed"] = true;
+    conditional.ChoosePathString("dean");
+    expect(conditional.ContinueMaximally()).toContain("Сначала ответьте.");
+  });
+
   it("две стрелки без условий: предупреждение, но ink собирается", () => {
     const p = demoProject();
     const dean = p.canvases.dean;
@@ -198,6 +216,39 @@ describe("проверки", () => {
     const r = checkProject(p);
     expect(r.diagnostics.filter((d) => d.severity === "error")).toEqual([]);
     expect(r.diagnostics).toContainEqual(expect.objectContaining({ code: "unreachable-branch", card: "c1" }));
+  });
+
+  it.each([
+    ["line", "Цель.\n"],
+    ["hub", "Из хаба.\n"],
+    ["flow", "Внутри вложенности.\n"],
+  ] as const)("jump переходит к карточке типа %s в другом файле", (type, expected) => {
+    const p = createProject("jump-target");
+    const main = createCanvas("main_scene", "Начало");
+    main.cards = [createCard("go", "jump", { target: "target.dest" })];
+    main.layout.go = { x: 0, y: 0 };
+    main.start = "go";
+
+    const target = createCanvas("target", "Цели");
+    const dest = createCard("dest", type, { speaker: "ent_narrator", text: "Цель." });
+    if (type === "flow") {
+      dest.flow!.cards = [createCard("inside", "line", { speaker: "ent_narrator", text: "Внутри вложенности." })];
+      dest.flow!.layout.inside = { x: 0, y: 0 };
+    }
+    target.cards = [createCard("decoy", "line", { speaker: "ent_narrator", text: "Не туда." }), dest];
+    target.layout = { decoy: { x: 0, y: 0 }, dest: { x: 300, y: 0 } };
+    target.start = "decoy";
+    if (type === "hub") {
+      target.cards.push(createCard("after_hub", "line", { speaker: "ent_narrator", text: "Из хаба." }));
+      target.layout.after_hub = { x: 600, y: 0 };
+      target.links.push({ from: "dest", to: "after_hub", order: 0, kind: "divert" });
+    }
+    p.canvases = { main_scene: main, target };
+    const r = checkProject(p);
+    expect(r.diagnostics.filter((d) => d.severity === "error")).toEqual([]);
+    const story = new Story(r.storyJson!);
+    story.ChoosePathString("main_scene");
+    expect(story.ContinueMaximally()).toBe(expected);
   });
 
   it("битый переход", () => {
@@ -366,5 +417,159 @@ describe("файлы проекта", () => {
     // повторная загрузка ничего не меняет
     await saveProject(fs, loaded);
     expect(await saveProject(fs, await loadProject(fs))).toEqual([]);
+  });
+});
+
+describe("вложенные потоки и свойства персонажей", () => {
+  it("nested сохраняется, компилируется в родительский knot и запускается по entry", async () => {
+    const p = createProject("nested");
+    const c = createCanvas("scene", "Сцена");
+    const outer = createCard("outer", "line", { speaker: "ent_narrator", text: "Снаружи." });
+    const inner = createCanvas("scene_outer", "Внутри");
+    inner.cards = [
+      createCard("inner_1", "line", { speaker: "ent_narrator", text: "Внутри.", entry: "inner" }),
+      createCard("inner_2", "line", { speaker: "ent_narrator", text: "Конец." }),
+    ];
+    inner.links = [{ from: "inner_1", to: "inner_2", order: 0, kind: "divert" }];
+    inner.layout = { inner_1: { x: 0, y: 0 }, inner_2: { x: 300, y: 0 } };
+    inner.start = "inner_1";
+    outer.flow = inner;
+    c.cards = [outer];
+    c.layout.outer = { x: 0, y: 0 };
+    c.start = "outer";
+    p.canvases.scene = c;
+
+    const fs = new MemoryFs();
+    await saveProject(fs, p);
+    const loaded = await loadProject(fs);
+    const nested = loaded.canvases.scene.cards[0].flow!;
+    expect(nested.cards.map((x) => x.id)).toEqual(["inner_1", "inner_2"]);
+    expect(await saveProject(fs, loaded)).toEqual([]);
+
+    const r = checkProject(loaded);
+    expect(r.diagnostics.filter((d) => d.severity === "error")).toEqual([]);
+    const ink = r.build.files.get("scene.ink")!;
+    expect(ink.match(/^=== scene ===$/gm)).toHaveLength(1);
+    expect(ink).toContain("= entry_inner");
+    expect(ink).toContain("= inner_1");
+    expect(ink).not.toContain("=== scene_outer ===");
+    const story = new Story(r.storyJson!);
+    story.ChoosePathString("scene.entry_inner");
+    expect(story.ContinueMaximally()).toBe("Внутри.\nКонец.\n");
+  });
+
+  it("карточка-вложенность автоматически входит внутрь и возвращается на свои выходы", () => {
+    const p = createProject("flow");
+    const c = createCanvas("scene", "Сцена");
+    const box = createCard("box", "flow", { text: "Блок" });
+    box.flow!.cards = [
+      createCard("inner_1", "line", { speaker: "ent_narrator", text: "Внутри." }),
+      createCard("inner_2", "line", { speaker: "ent_narrator", text: "Ещё внутри." }),
+    ];
+    box.flow!.links = [{ from: "inner_1", to: "inner_2", order: 0, kind: "divert" }];
+    box.flow!.layout = { inner_1: { x: 0, y: 0 }, inner_2: { x: 300, y: 0 } };
+    c.cards = [
+      createCard("before", "line", { speaker: "ent_narrator", text: "До." }),
+      box,
+      createCard("after", "line", { speaker: "ent_narrator", text: "После." }),
+    ];
+    c.links = [
+      { from: "before", to: "box", order: 0, kind: "divert" },
+      { from: "box", to: "after", order: 0, kind: "divert" },
+    ];
+    c.layout = { before: { x: 0, y: 0 }, box: { x: 300, y: 0 }, after: { x: 600, y: 0 } };
+    c.start = "before";
+    p.canvases.scene = c;
+
+    const r = checkProject(p);
+    expect(r.diagnostics.filter((d) => d.severity === "error")).toEqual([]);
+    const story = new Story(r.storyJson!);
+    story.ChoosePathString("scene");
+    expect(story.ContinueMaximally()).toBe("До.\nВнутри.\nЕщё внутри.\nПосле.\n");
+  });
+
+  it("вложенность с первой репликой игрока становится условным вариантом", () => {
+    const p = createProject("nested-choice");
+    p.variables.vars.push({ name: "allowed", type: "bool", default: false });
+    const c = createCanvas("scene", "Сцена");
+    const box = createCard("box", "flow", { text: "Блок", condition: "allowed" });
+    box.flow!.cards = [createCard("nested_choice", "line", { speaker: "ent_player", text: "Ответ из вложенности.", menuText: "Вложенный вариант" })];
+    box.flow!.layout.nested_choice = { x: 0, y: 0 };
+    c.cards = [
+      createCard("hub", "hub"),
+      createCard("direct", "line", { speaker: "ent_player", text: "Обычный ответ.", menuText: "Обычный вариант" }),
+      box,
+      createCard("after", "line", { speaker: "ent_narrator", text: "Финал." }),
+    ];
+    c.links = [
+      { from: "hub", to: "direct", order: 0, kind: "divert" },
+      { from: "hub", to: "box", order: 1, kind: "divert" },
+      { from: "direct", to: "after", order: 0, kind: "divert" },
+      { from: "box", to: "after", order: 0, kind: "divert" },
+    ];
+    c.layout = { hub: { x: 0, y: 0 }, direct: { x: 300, y: 0 }, box: { x: 300, y: 200 }, after: { x: 600, y: 0 } };
+    c.start = "hub";
+    p.canvases.scene = c;
+
+    const r = checkProject(p);
+    expect(r.diagnostics.filter((d) => d.severity === "error")).toEqual([]);
+    const closed = new Story(r.storyJson!);
+    closed.ChoosePathString("scene");
+    closed.ContinueMaximally();
+    expect(closed.currentChoices.map((choice) => choice.text)).toEqual(["Обычный вариант"]);
+
+    const open = new Story(r.storyJson!);
+    open.variablesState["allowed"] = true;
+    open.ChoosePathString("scene");
+    open.ContinueMaximally();
+    expect(open.currentChoices.map((choice) => choice.text)).toEqual(["Обычный вариант", "Вложенный вариант"]);
+    open.ChooseChoiceIndex(1);
+    expect(open.ContinueMaximally()).toBe("ИГРОК: Ответ из вложенности.\nФинал.\n");
+  });
+
+  it("одинаковые trust и can_start() у двух персонажей не конфликтуют", () => {
+    const p = demoProject();
+    p.variables.vars.push(
+      { name: "trust", owner: "ent_dean", type: "int", default: 1 },
+      { name: "trust", owner: "ent_advisor", type: "int", default: 2 },
+    );
+    p.variables.functions.push(
+      { name: "can_start", owner: "ent_dean", params: [], body: "~ return trust > 0" },
+      { name: "can_start", owner: "ent_advisor", params: [], body: "~ return trust > 1" },
+    );
+    p.canvases.dean.cards.find((c) => c.id === "c1")!.action = "ent_dean.trust = ent_dean.can_start()";
+    p.canvases.advisor.cards.find((c) => c.id === "a1")!.action = "ent_advisor.trust = ent_advisor.can_start()";
+    const r = checkProject(p);
+    expect(r.diagnostics.filter((d) => d.severity === "error")).toEqual([]);
+    const globals = r.build.files.get("globals.ink")!;
+    expect(globals).toContain("VAR ent_dean__trust = 1");
+    expect(globals).toContain("VAR ent_advisor__trust = 2");
+    expect(globals).toContain("=== function ent_dean__can_start() ===");
+    expect(globals).toContain("~ return ent_advisor__trust > 1");
+
+    const first = new Story(r.storyJson!);
+    first.ChoosePathString("dean");
+    first.ContinueMaximally();
+    expect(first.variablesState["ent_dean__trust"]).toBe(true);
+    expect(first.variablesState["ent_advisor__trust"]).toBe(2);
+    const second = new Story(r.storyJson!);
+    second.ChoosePathString("advisor");
+    second.ContinueMaximally();
+    expect(second.variablesState["ent_dean__trust"]).toBe(1);
+    expect(second.variablesState["ent_advisor__trust"]).toBe(true);
+  });
+
+  it("scoped EXTERNAL получает стабильное имя и сохраняет fallback", () => {
+    const p = demoProject();
+    p.variables.functions.push({ name: "can_start", owner: "ent_dean", params: [], body: "~ return true", external: true });
+    p.canvases.dean.cards.find((c) => c.id === "c1")!.action = "thesis_changed = ent_dean.can_start()";
+    const r = checkProject(p);
+    expect(r.diagnostics.filter((d) => d.severity === "error")).toEqual([]);
+    expect(r.build.manifest.externals).toContainEqual({ name: "ent_dean__can_start", params: [], owner: "ent_dean", sourceName: "can_start" });
+    const story = new Story(r.storyJson!);
+    story.allowExternalFunctionFallbacks = true;
+    story.ChoosePathString("dean");
+    story.ContinueMaximally();
+    expect(story.variablesState["thesis_changed"]).toBe(true);
   });
 });

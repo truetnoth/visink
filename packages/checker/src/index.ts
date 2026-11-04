@@ -1,7 +1,8 @@
 import { Compiler, CompilerOptions, JsonFileHandler } from "inkjs/full";
 import type { Project } from "@visink/core";
+import { flowCards } from "@visink/core";
 import type { BuildResult, Diagnostic } from "@visink/compiler";
-import { buildProject, rootCard } from "@visink/compiler";
+import { buildProject, flattenCanvas, rootCard } from "@visink/compiler";
 
 export interface CheckResult {
   build: BuildResult;
@@ -42,6 +43,7 @@ export function compileInk(build: BuildResult): { diagnostics: Diagnostic[]; sto
       card: ref?.card,
       ...(ref?.link ? { link: ref.link } : {}),
       ...(ref?.func ? { func: ref.func } : {}),
+      ...(ref?.funcOwner ? { funcOwner: ref.funcOwner } : {}),
     });
   }
   if (!storyJson && !diagnostics.some((d) => d.severity === "error")) {
@@ -55,7 +57,7 @@ export function findUnreachable(project: Project): Diagnostic[] {
   const out: Diagnostic[] = [];
   const reachedFromJumps = new Map<string, Set<string>>(); // canvas id → card ids или имена входов
   for (const canvas of Object.values(project.canvases)) {
-    for (const card of canvas.cards) {
+    for (const { card } of flowCards(canvas)) {
       if (card.type !== "jump" || !card.target) continue;
       const [canvasId, sub] = card.target.split(".", 2);
       if (!sub) continue;
@@ -63,7 +65,8 @@ export function findUnreachable(project: Project): Diagnostic[] {
       reachedFromJumps.get(canvasId)!.add(sub);
     }
   }
-  for (const [key, canvas] of Object.entries(project.canvases)) {
+  for (const [key, source] of Object.entries(project.canvases)) {
+    const canvas = flattenCanvas(source);
     if (!canvas.cards.length) continue;
     const extra = reachedFromJumps.get(canvas.id) ?? new Set();
     const root = rootCard(canvas);
@@ -117,17 +120,20 @@ const KNOWN = new Set([
 
 /**
  * Имена в условии, действии или теле функции, которых нет среди переменных, списков, функций и файлов.
- * extra — локальные имена (параметры функции). Для подсветки до сборки.
+ * extra — локальные имена (параметры функции), owner — область функции персонажа.
  */
-export function unknownIdentifiers(expr: string, project: Project, extra: string[] = []): string[] {
+export function unknownIdentifiers(expr: string, project: Project, extra: string[] = [], owner?: string): string[] {
   const known = new Set([...KNOWN, ...extra]);
-  for (const f of project.variables.functions ?? []) known.add(f.name);
-  for (const v of project.variables.vars) known.add(v.name);
+  for (const item of [...project.variables.functions, ...project.variables.vars, ...project.variables.lists]) {
+    if (item.owner) {
+      known.add(`${item.owner}.${item.name}`);
+      if (item.owner === owner) known.add(item.name);
+    } else known.add(item.name);
+  }
   for (const l of project.variables.lists) {
-    known.add(l.name);
     for (const i of l.items) {
       known.add(i);
-      known.add(`${l.name}.${i}`);
+      known.add(`${l.owner ? `${l.owner}.` : ""}${l.name}.${i}`);
     }
   }
   const canvasIds = new Set(Object.values(project.canvases).map((c) => c.id));

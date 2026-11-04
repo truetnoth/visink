@@ -1,7 +1,7 @@
 import { create } from "zustand";
 import { temporal } from "zundo";
-import type { Canvas, Project, ProjectFs } from "@visink/core";
-import { createProject, loadProject, saveProject, writeBuild } from "@visink/core";
+import type { Canvas, FlowPath, Project, ProjectFs } from "@visink/core";
+import { canvasAtPath, createProject, flowCards, loadProject, saveProject, writeBuild } from "@visink/core";
 import type { CheckResult } from "@visink/checker";
 import { checkProject } from "@visink/checker";
 import { BrowserFs, pickDirectory } from "./browserFs";
@@ -48,12 +48,16 @@ interface State {
   /** внешняя папка сборки (например, в проекте Godot); иначе — project.settings.buildDir внутри проекта */
   buildFs: FolderFs | null;
   activeCanvas: string | null;
+  flowPath: FlowPath;
+  view: "canvas" | "logic" | "characters" | "testing";
+  editorOpen: boolean;
   selection: string[];
   /** выделенная стрелка: id ребра "from>to>port" */
   selectedLink: string | null;
+  selectedLinks: string[];
   selectedEntity: string | null;
-  /** переменная или список, открытые в панели свойств */
-  inspect: { kind: "var" | "list" | "func"; name: string } | null;
+  /** переменная или список, открытые на экране логики */
+  inspect: { kind: "var" | "list" | "func"; name: string; owner?: string } | null;
   check: CheckResult | null;
   dirty: boolean;
   status: string;
@@ -65,11 +69,14 @@ interface State {
 
   edit: (fn: (p: Project) => void) => void;
   editCanvas: (fn: (c: Canvas, p: Project) => void) => void;
-  setActiveCanvas: (key: string | null) => void;
-  setSelection: (ids: string[], link?: string | null) => void;
+  setActiveCanvas: (key: string | null, path?: FlowPath) => void;
+  setView: (view: State["view"]) => void;
+  openEditor: () => void;
+  closeEditor: () => void;
+  setSelection: (ids: string[], link?: string | null, links?: string[]) => void;
   selectEntity: (id: string | null) => void;
-  inspectVariable: (kind: "var" | "list" | "func", name: string | null) => void;
-  /** щелчок по пустому холсту — убрать из панели свойств переменную, персонажа, стрелку */
+  inspectVariable: (kind: "var" | "list" | "func", name: string | null, owner?: string) => void;
+  /** щелчок по пустому холсту — закрыть контекстный редактор */
   clearInspector: () => void;
   /** открыть файл и выделить стрелку */
   focusLink: (canvas: string, link: { from: string; to: string; port?: string }) => void;
@@ -100,8 +107,11 @@ export const useStore = create<State>()(
       fs: null,
       buildFs: null,
       activeCanvas: null,
+      flowPath: [],
+      view: "canvas",
+      editorOpen: false,
       selection: [],
-      selectedLink: null,
+      selectedLink: null, selectedLinks: [],
       selectedEntity: null,
       inspect: null,
       check: null,
@@ -120,50 +130,66 @@ export const useStore = create<State>()(
       },
 
       editCanvas(fn) {
-        const key = get().activeCanvas;
+        const { activeCanvas: key, flowPath } = get();
         if (!key) return;
         get().edit((p) => {
-          const canvas = p.canvases[key];
+          const root = p.canvases[key];
+          const canvas = root && canvasAtPath(root, flowPath);
           if (canvas) fn(canvas, p);
         });
       },
 
-      setActiveCanvas: (key) => set({ activeCanvas: key, selection: [], selectedLink: null, selectedEntity: null, inspect: null }),
-      setSelection: (ids, link = null) => {
-        const cur = get().selection;
-        if (cur.length === ids.length && cur.every((id, i) => id === ids[i]) && get().selectedLink === link) return;
-        const picked = ids.length > 0 || !!link;
+      setActiveCanvas: (key, flowPath = []) => set({ activeCanvas: key, flowPath, view: "canvas", editorOpen: false, selection: [], selectedLink: null, selectedLinks: [], selectedEntity: null, inspect: null }),
+      setView: (view) => set({ view, editorOpen: false }),
+      openEditor: () => set({ editorOpen: true }),
+      closeEditor: () => set({ editorOpen: false }),
+      setSelection: (ids, link = null, links = link ? [link] : []) => {
+        const state = get();
+        const cur = state.selection;
+        const sameLinks = state.selectedLinks.length === links.length && state.selectedLinks.every((id, i) => id === links[i]);
+        if (cur.length === ids.length && cur.every((id, i) => id === ids[i]) && state.selectedLink === link && sameLinks) return;
+        const picked = ids.length > 0 || links.length > 0;
         set({
           selection: ids,
           selectedLink: link,
-          selectedEntity: picked ? null : get().selectedEntity,
-          inspect: picked ? null : get().inspect,
+          selectedLinks: links,
+          selectedEntity: picked ? null : state.selectedEntity,
+          inspect: picked ? null : state.inspect,
         });
       },
-      selectEntity: (id) => set({ selectedEntity: id, inspect: null, selection: [], selectedLink: null }),
-      clearInspector: () => {
-        const s = get();
-        if (s.inspect || s.selectedEntity || s.selectedLink) set({ inspect: null, selectedEntity: null, selectedLink: null });
-      },
-      inspectVariable: (kind, name) => set({ inspect: name ? { kind, name } : null, selectedEntity: null, selection: [], selectedLink: null }),
-      focusLink: (canvas, link) =>
+      selectEntity: (id) => set({ selectedEntity: id, view: "characters", editorOpen: false, inspect: null, selection: [], selectedLink: null, selectedLinks: [] }),
+      clearInspector: () => set({ editorOpen: false, selectedLink: null, selectedLinks: [] }),
+      inspectVariable: (kind, name, owner) => set({ inspect: name ? { kind, name, owner } : null, view: owner ? "characters" : "logic", selectedEntity: owner ?? get().selectedEntity, editorOpen: false, selection: [], selectedLink: null, selectedLinks: [] }),
+      focusLink: (canvas, link) => {
+        const root = get().project?.canvases[canvas];
+        const flowPath = root ? flowCards(root).find((x) => x.card.id === link.from)?.path ?? [] : [];
+        const id = `${link.from}>${link.to}>${link.port ?? ""}`;
         set({
           activeCanvas: canvas,
+          flowPath,
+          view: "canvas",
+          editorOpen: false,
           selection: [],
-          selectedLink: `${link.from}>${link.to}>${link.port ?? ""}`,
-          selectedEntity: null,
+          selectedLink: id,
+          selectedLinks: [id],
           inspect: null,
           focus: { canvas, card: link.from, nonce: Date.now() },
-        }),
-      focusCard: (canvas, card) =>
+        });
+      },
+      focusCard: (canvas, card) => {
+        const root = get().project?.canvases[canvas];
+        const flowPath = root && card ? flowCards(root).find((x) => x.card.id === card)?.path ?? [] : [];
         set({
           activeCanvas: canvas,
+          flowPath,
+          view: "canvas",
+          editorOpen: false,
           selection: card ? [card] : [],
-          selectedLink: null,
+          selectedLink: null, selectedLinks: [],
           inspect: null,
-          selectedEntity: null,
           focus: card ? { canvas, card, nonce: Date.now() } : null,
-        }),
+        });
+      },
 
       async openProject(createNew, picked) {
         try {
@@ -198,7 +224,12 @@ export const useStore = create<State>()(
             fs,
             buildFs,
             activeCanvas: Object.keys(project.canvases).sort()[0] ?? null,
+            flowPath: [],
+            view: "canvas",
+            editorOpen: false,
             selection: [],
+            selectedLink: null, selectedLinks: [],
+            inspect: null,
             selectedEntity: null,
             dirty: false,
             statusNonce: Date.now(), status: `Открыт проект «${project.settings.name}»`,
@@ -220,7 +251,12 @@ export const useStore = create<State>()(
           fs: null,
           buildFs: null,
           activeCanvas: Object.keys(project.canvases).sort()[0] ?? null,
+          flowPath: [],
+          view: "canvas",
+          editorOpen: false,
           selection: [],
+          selectedLink: null, selectedLinks: [],
+          inspect: null,
           selectedEntity: null,
           dirty: false,
           statusNonce: Date.now(), status: "Проект в памяти — чтобы сохранять, откройте папку проекта",
@@ -325,9 +361,11 @@ function runCheck() {
 useStore.subscribe((s, prev) => {
   if (s.project === prev.project || !s.project) return;
   if (!loading && !s.dirty) useStore.setState({ dirty: true });
-  // после отмены переименования холста активный ключ может пропасть
+  // после отмены активный файл или вложенный слой может исчезнуть
   if (s.activeCanvas && !s.project.canvases[s.activeCanvas]) {
-    useStore.setState({ activeCanvas: Object.keys(s.project.canvases).sort()[0] ?? null, selection: [] });
+    useStore.setState({ activeCanvas: Object.keys(s.project.canvases).sort()[0] ?? null, flowPath: [], selection: [], selectedLink: null, selectedLinks: [], editorOpen: false });
+  } else if (s.activeCanvas && !canvasAtPath(s.project.canvases[s.activeCanvas], s.flowPath)) {
+    useStore.setState({ flowPath: [], selection: [], selectedLink: null, selectedLinks: [], editorOpen: false });
   }
   clearTimeout(checkTimer);
   checkTimer = setTimeout(runCheck, 300);

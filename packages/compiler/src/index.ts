@@ -1,5 +1,5 @@
 import type { Canvas, Card, Link, Project, Variable } from "@visink/core";
-import { guessStart, isPlayerCard, isValidInkName, stableStringify } from "@visink/core";
+import { flowCards, guessStart, isPlayerCard, isValidInkName, stableStringify } from "@visink/core";
 import { escapeInkText, escapeTagValue } from "./escape";
 
 export { escapeInkText, escapeTagValue } from "./escape";
@@ -17,6 +17,7 @@ export interface Diagnostic {
   link?: LinkRef;
   /** функция, в теле которой ошибка */
   func?: string;
+  funcOwner?: string;
 }
 
 export interface LinkRef {
@@ -31,6 +32,7 @@ export interface LineRef {
   card?: string;
   link?: LinkRef;
   func?: string;
+  funcOwner?: string;
 }
 
 export interface CompiledCanvas {
@@ -53,7 +55,7 @@ export interface Manifest {
     entries: { name: string; path: string }[];
   }[];
   /** функции, которые игра должна привязать (BindExternalFunction) */
-  externals: { name: string; params: string[]; description?: string }[];
+  externals: { name: string; params: string[]; description?: string; owner?: string; sourceName?: string }[];
   characters: {
     id: string;
     name: string;
@@ -107,6 +109,72 @@ export function stitchName(card: Card): string {
   return card.id;
 }
 
+export const scopedInkName = (owner: string | undefined, name: string) => owner ? `${owner}__${name}` : name;
+
+function replaceLogicToken(text: string, from: string, to: string): string {
+  const escaped = from.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const re = new RegExp(`(?<![\\w.])${escaped}(?![\\w])`, "g");
+  return text.split(/("[^"]*")/).map((part, i) => i % 2 ? part : part.replace(re, to)).join("");
+}
+
+/** Переводит редакторские ссылки на свойства персонажей в глобальные имена Ink. */
+export function compileLogic(project: Project, text: string, owner?: string, params: string[] = []): string {
+  const owned = [...project.variables.vars, ...project.variables.lists, ...project.variables.functions].filter((x) => x.owner);
+  let out = text;
+  for (const item of owned) out = replaceLogicToken(out, `${item.owner}.${item.name}`, scopedInkName(item.owner, item.name));
+  if (owner) {
+    for (const item of owned.filter((x) => x.owner === owner && !params.includes(x.name))) {
+      out = replaceLogicToken(out, item.name, scopedInkName(owner, item.name));
+    }
+  }
+  return out;
+}
+
+/** Визуальные слои одного файла в плоской форме для существующего генератора Ink. */
+export function flattenCanvas(root: Canvas): Canvas {
+  const out: Canvas = { ...root, cards: [], links: [], layout: {}, groups: [], notes: [], graveyard: [] };
+  const visit = (canvas: Canvas) => {
+    for (const card of canvas.cards) {
+      const { flow: _flow, ...plain } = card;
+      out.cards.push(plain);
+      if (canvas.layout[card.id]) out.layout[card.id] = canvas.layout[card.id];
+    }
+    out.links.push(...canvas.links.filter((link) => {
+      const source = canvas.cards.find((card) => card.id === link.from);
+      return source?.type !== "flow" || !source.flow;
+    }));
+    out.notes.push(...canvas.notes);
+    out.groups.push(...canvas.groups);
+    out.graveyard.push(...canvas.graveyard);
+    for (const card of canvas.cards) {
+      if (!card.flow) continue;
+      if (card.type !== "flow") {
+        visit(card.flow);
+        continue;
+      }
+      const nestedStart = out.cards.length;
+      const nestedLinkStart = out.links.length;
+      visit(card.flow);
+      const nestedCards = out.cards.slice(nestedStart);
+      const parentLinks = canvas.links.filter((link) => link.from === card.id);
+      if (!nestedCards.length) {
+        out.links.push(...parentLinks);
+        continue;
+      }
+      const nestedIds = new Set(nestedCards.map((nested) => nested.id));
+      const hasOutgoing = new Set(out.links.slice(nestedLinkStart).filter((link) => nestedIds.has(link.from)).map((link) => link.from));
+      const start = rootCard(card.flow);
+      if (start) out.links.push({ from: card.id, to: start.id, order: 0, kind: "divert" });
+      for (const terminal of nestedCards) {
+        if (hasOutgoing.has(terminal.id)) continue;
+        for (const link of parentLinks) out.links.push({ ...link, from: terminal.id });
+      }
+    }
+  };
+  visit(root);
+  return out;
+}
+
 /** С какой карточки начинается узел файла: явное начало, иначе догадка (см. guessStart). */
 export function rootCard(canvas: Canvas): Card | undefined {
   return canvas.cards.find((c) => c.id === canvas.start) ?? guessStart(canvas);
@@ -118,15 +186,36 @@ export function resolveTarget(project: Project, target: string): string | null {
   const canvas = Object.values(project.canvases).find((c) => c.id === canvasId);
   if (!canvas) return null;
   if (!sub) return canvas.id;
+  const cards = flowCards(canvas).map((x) => x.card);
   const name = sub.startsWith("entry_") ? sub.slice(6) : sub;
-  if (canvas.cards.some((c) => c.entry === name)) return `${canvas.id}.entry_${name}`;
-  const card = canvas.cards.find((c) => c.id === sub);
+  if (cards.some((c) => c.entry === name)) return `${canvas.id}.entry_${name}`;
+  const card = cards.find((c) => c.id === sub);
   if (card) return `${canvas.id}.${stitchName(card)}`;
   return null;
 }
 
-export function compileCanvas(project: Project, key: string, canvas: Canvas, diagnostics: Diagnostic[] = []): CompiledCanvas {
+export function compileCanvas(project: Project, key: string, source: Canvas, diagnostics: Diagnostic[] = []): CompiledCanvas {
+  const flat = flattenCanvas(source);
+  const compile = (text: string | undefined) => text == null ? undefined : compileLogic(project, text);
+  const canvas: Canvas = {
+    ...flat,
+    cards: flat.cards.map((card) => ({ ...card, condition: compile(card.condition), action: compile(card.action), ...(card.type === "ink" ? { text: compile(card.text) } : {}) })),
+    links: flat.links.map((link) => ({ ...link, condition: compile(link.condition), action: compile(link.action) })),
+  };
+  const seenCards = new Set<string>();
+  for (const card of canvas.cards) {
+    if (seenCards.has(card.id)) diagnostics.push({ severity: "error", code: "duplicate-card", canvas: key, card: card.id, message: `Id карточки «${card.id}» повторяется во вложенных потоках` });
+    seenCards.add(card.id);
+  }
   const byId = new Map(canvas.cards.map((c) => [c.id, c]));
+  const sourceById = new Map(flowCards(source).map(({ card }) => [card.id, card]));
+  const playerOption = (card: Card): Card | undefined => {
+    if (isPlayerCard(project, card)) return card;
+    if (card.type !== "flow") return undefined;
+    const inner = sourceById.get(card.id)?.flow;
+    const start = inner && rootCard(inner);
+    return start ? playerOption(start) : undefined;
+  };
   const outgoing = new Map<string, Link[]>();
   for (const link of canvas.links) {
     if (!outgoing.has(link.from)) outgoing.set(link.from, []);
@@ -162,30 +251,41 @@ export function compileCanvas(project: Project, key: string, canvas: Canvas, dia
     if (!links.length) return ["-> DONE"];
     const pairs = links.flatMap((l) => {
       const t = byId.get(l.to);
-      return t ? [{ l, t }] : [];
+      return t ? [{ l, t, choice: playerOption(t) }] : [];
     });
     if (!pairs.length) return [divert(links[0].to, card)];
-    const players = pairs.filter(({ t }) => isPlayerCard(project, t));
-    if (players.length && players.length !== pairs.length) {
-      diag("error", "mixed-links", "Нельзя смешивать стрелки к репликам игрока и к обычным карточкам", card.id);
-    }
+    const players = pairs.filter(({ choice }) => choice);
+    const condOf = ({ l, t }: { l: Link; t: Card }) => both(gateOf(t), linkCond(l));
     if (players.length) {
-      const ordered = [...players.filter(({ t }) => t.repeat !== "fallback"), ...players.filter(({ t }) => t.repeat === "fallback")];
-      return ordered.flatMap(({ l, t }): Out[] => {
-        const gate = gateOf(t);
+      const ordinary = pairs.filter(({ choice }) => !choice);
+      if (ordinary.some((pair) => !condOf(pair))) {
+        diag("error", "mixed-links", "При вариантах игрока обычная карточка должна иметь условие на входном пине", card.id);
+      }
+      const routes = ordinary.flatMap(({ l, t }): Out[] => {
+        const cond = condOf({ l, t });
+        if (!cond) return [];
+        const ref = { card: linkCond(l) && !gateOf(t) ? card.id : t.id, ...(linkCond(l) ? { link: refOf(l) } : {}) };
+        const acts = linkActions(l, card);
+        return acts.length
+          ? [{ text: `{ ${cond}:`, ...ref }, ...acts, `    ${divert(t.id, card)}`, "}"]
+          : [{ text: `{${cond}: ${divert(t.id, card)}}`, ...ref }];
+      });
+      const ordered = [...players.filter(({ choice }) => choice!.repeat !== "fallback"), ...players.filter(({ choice }) => choice!.repeat === "fallback")];
+      return [...routes, ...ordered.flatMap(({ l, t, choice }): Out[] => {
+        const option = choice!;
+        const gate = option.id === t.id ? gateOf(t) : both(gateOf(t), gateOf(option));
         const lc = linkCond(l);
         const conds = [gate, lc].filter(Boolean).map((c) => `{${c}} `).join("");
         // ошибка в условии — на стрелке, если условие есть на ней, иначе на варианте
         const ref = { card: lc && !gate ? card.id : t.id, ...(lc ? { link: refOf(l) } : {}) };
         const head =
-          t.repeat === "fallback" ? `* ${conds}->` : `${t.repeat === "sticky" ? "+" : "*"} ${conds}[${escapeInkText(t.menuText || t.text || "…")}]`;
+          option.repeat === "fallback" ? `* ${conds}->` : `${option.repeat === "sticky" ? "+" : "*"} ${conds}[${escapeInkText(option.menuText || option.text || "…")}]`;
         const acts = linkActions(l, card);
         const target = `-> ${stitchName(t)}`;
-        if (!acts.length) return [{ text: t.repeat === "fallback" ? `${head} ${stitchName(t)}` : `${head} ${target}`, ...ref }];
+        if (!acts.length) return [{ text: option.repeat === "fallback" ? `${head} ${stitchName(t)}` : `${head} ${target}`, ...ref }];
         return [{ text: head, ...ref }, ...acts, { text: `    ${target}`, card: t.id }];
-      });
+      })];
     }
-    const condOf = ({ l, t }: { l: Link; t: Card }) => both(gateOf(t), linkCond(l));
     if (!condOf(pairs[0])) {
       if (pairs.length > 1) diag("warning", "unreachable-branch", "Несколько стрелок без условия: сработает только первая", card.id);
       const { l, t } = pairs[0];
@@ -238,6 +338,11 @@ export function compileCanvas(project: Project, key: string, canvas: Canvas, dia
       }
       case "hub":
         return [...actionLines(card.action), ...routing(card)];
+      case "flow": {
+        const inner = sourceById.get(card.id)?.flow;
+        const start = inner && rootCard(inner);
+        return [...actionLines(card.action), ...(start ? [divert(start.id, card)] : routing(card))];
+      }
       case "condition": {
         const links = outgoing.get(card.id) ?? [];
         const yes = links.find((l) => l.port === "yes");
@@ -359,35 +464,37 @@ export function compileGlobals(project: Project, diagnostics: Diagnostic[] = [])
   const out = new Emitter();
   out.push(HEADER);
   const seen = new Set<string>();
-  const check = (name: string, func?: string) => {
+  const check = (sourceName: string, owner?: string, func?: string) => {
+    const name = scopedInkName(owner, sourceName);
+    const ref = { ...(func ? { func } : {}), ...(owner ? { funcOwner: owner } : {}) };
     if (!isValidInkName(name)) {
-      diagnostics.push({ severity: "error", code: "bad-var-name", message: `Имя «${name}»: только латиница, цифры и _`, ...(func ? { func } : {}) });
+      diagnostics.push({ severity: "error", code: "bad-var-name", message: `Имя «${sourceName}»: только латиница, цифры и _`, ...ref });
     }
-    if (seen.has(name)) diagnostics.push({ severity: "error", code: "duplicate-var", message: `Имя «${name}» объявлено дважды`, ...(func ? { func } : {}) });
+    if (seen.has(name)) diagnostics.push({ severity: "error", code: "duplicate-var", message: `Имя «${name}» объявлено дважды`, ...ref });
     seen.add(name);
   };
   for (const v of project.variables.vars) {
-    check(v.name);
-    out.push(`VAR ${v.name} = ${varLiteral(v)}`);
+    check(v.name, v.owner);
+    out.push(`VAR ${scopedInkName(v.owner, v.name)} = ${varLiteral(v)}`);
   }
   for (const l of project.variables.lists) {
-    check(l.name);
+    check(l.name, l.owner);
     const items = l.items.map((i) => (l.initial.includes(i) ? `(${i})` : i));
-    out.push(`LIST ${l.name} = ${items.join(", ")}`);
+    out.push(`LIST ${scopedInkName(l.owner, l.name)} = ${items.join(", ")}`);
   }
   const functions = project.variables.functions ?? [];
   for (const f of functions) {
-    check(f.name, f.name);
+    check(f.name, f.owner, f.name);
     for (const p of f.params) {
-      if (!isValidInkName(p)) diagnostics.push({ severity: "error", code: "bad-param", message: `Параметр «${p}»: только латиница, цифры и _`, func: f.name });
+      if (!isValidInkName(p)) diagnostics.push({ severity: "error", code: "bad-param", message: `Параметр «${p}»: только латиница, цифры и _`, func: f.name, funcOwner: f.owner });
     }
   }
-  for (const f of functions.filter((x) => x.external)) out.push(`EXTERNAL ${f.name}(${f.params.join(", ")})`, { func: f.name });
+  for (const f of functions.filter((x) => x.external)) out.push(`EXTERNAL ${scopedInkName(f.owner, f.name)}(${f.params.join(", ")})`, { func: f.name, funcOwner: f.owner });
   for (const f of functions) {
-    const ref = { func: f.name };
+    const ref = { func: f.name, funcOwner: f.owner };
     out.push("");
-    out.push(`=== function ${f.name}(${f.params.join(", ")}) ===`, ref);
-    const body = f.body.replace(/\s+$/, "");
+    out.push(`=== function ${scopedInkName(f.owner, f.name)}(${f.params.join(", ")}) ===`, ref);
+    const body = compileLogic(project, f.body.replace(/\s+$/, ""), f.owner, f.params);
     for (const line of body ? body.split("\n") : ["~ return"]) out.push(line, ref);
   }
   return { text: out.lines.join("\n") + "\n", lineMap: out.map };
@@ -439,7 +546,8 @@ export function buildProject(project: Project): BuildResult {
         id: c.id,
         title: c.title,
         file: canvases[key].file,
-        entries: c.cards
+        entries: flowCards(c)
+          .map((x) => x.card)
           .filter((card) => card.entry)
           .map((card) => ({ name: card.entry!, path: `${c.id}.entry_${card.entry}` }))
           .sort((a, b) => a.name.localeCompare(b.name)),
@@ -447,7 +555,7 @@ export function buildProject(project: Project): BuildResult {
     }),
     externals: (project.variables.functions ?? [])
       .filter((f) => f.external)
-      .map((f) => ({ name: f.name, params: f.params, ...(f.description ? { description: f.description } : {}) })),
+      .map((f) => ({ name: scopedInkName(f.owner, f.name), params: f.params, ...(f.description ? { description: f.description } : {}), ...(f.owner ? { owner: f.owner, sourceName: f.name } : {}) })),
     characters: project.entities
       .filter((e) => e.kind === "character")
       .map((e) => ({ id: e.id, name: e.name, inkName: e.inkName, color: e.color, portrait: e.portrait, isPlayer: e.isPlayer })),
@@ -455,7 +563,7 @@ export function buildProject(project: Project): BuildResult {
   };
   for (const key of keys) {
     const c = project.canvases[key];
-    for (const card of c.cards) {
+    for (const { card } of flowCards(c)) {
       if (card.type !== "line" || !card.text?.trim()) continue;
       manifest.lines[`${c.id}.${card.id}`] = { canvas: c.id, card: card.id, speaker: card.speaker, text: card.text, emotion: card.emotion };
     }

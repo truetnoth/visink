@@ -29,7 +29,11 @@
 ИГРОК: Мне пора. # id: advisor.a5 # speaker: ent_player
 -> a8
 = a8
-{dean_trust < 0: -> a9 | -> a10}
+{ dean_trust < 0:
+    -> a9
+- else:
+    -> a10
+}
 = a9
 НАУЧРУК: Декан на вас зол. # id: advisor.a9 # speaker: ent_advisor
 -> a10

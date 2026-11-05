@@ -50,6 +50,7 @@
       "name": "Научрук"
     }
   ],
+  "externals": [],
   "lines": {
     "advisor.a1": {
       "canvas": "advisor",

@@ -474,7 +474,7 @@ function Flow({ flowKey, viewports }: { flowKey: string; viewports: Map<string, 
     if (!pinPicker && !pinEditor) return;
     const down = (e: MouseEvent) => {
       const target = e.target as HTMLElement;
-      if (pinPicker && !target.closest(".pin-count-menu")) setPinPicker(null);
+      if (pinPicker && !target.closest(".pin-count-menu, .create-menu")) setPinPicker(null);
       if (pinEditor && !target.closest(".pin-editor-wrap") && !target.closest(".popup")) setPinEditor(null);
     };
     document.addEventListener("mousedown", down, true);
@@ -599,10 +599,10 @@ function Flow({ flowKey, viewports }: { flowKey: string; viewports: Map<string, 
   );
 
   const openMenu = useCallback(
-    (clientX: number, clientY: number, from?: string, port?: "yes" | "no", count = 1) => {
+    (clientX: number, clientY: number, from?: string, port?: "yes" | "no", count = 1, keepPicker = false) => {
       const rect = wrapper.current?.getBoundingClientRect();
       const at = screenToFlowPosition({ x: clientX, y: clientY - 30 });
-      setPinPicker(null);
+      if (!keepPicker) setPinPicker(null);
       setPinEditor(null);
       setMenu({
         x: Math.min(clientX - (rect?.left ?? 0), (rect?.width ?? 1e4) - 230),
@@ -615,6 +615,7 @@ function Flow({ flowKey, viewports }: { flowKey: string; viewports: Map<string, 
     },
     [screenToFlowPosition],
   );
+  const closeMenu = useCallback(() => { setMenu(null); setPinPicker(null); }, []);
 
   // Стрелка в пустоту — меню: что поставить там, где отпустили. Щелчок по пину без протяжки — не стрелка.
   const connectFrom = useRef<{ x: number; y: number } | null>(null);
@@ -671,6 +672,7 @@ function Flow({ flowKey, viewports }: { flowKey: string; viewports: Map<string, 
     (item: MenuItem) => {
       if (!menu) return;
       setMenu(null);
+      setPinPicker(null);
       if (item.run) return item.run();
       let newIds: string[] = [];
       editCanvas((canvas) => {
@@ -983,7 +985,13 @@ function Flow({ flowKey, viewports }: { flowKey: string; viewports: Map<string, 
         top: Math.max(8, Math.min(pinPicker.y - (wrapper.current?.getBoundingClientRect().top ?? 0), (wrapper.current?.clientHeight ?? 400) - 170)),
       }} onContextMenu={(e) => e.preventDefault()}>
         <div className="pin-count-title">Новых связей</div>
-        {[1, 2, 3, 4].map((count) => <button key={count} onMouseDown={(e) => e.preventDefault()} onMouseEnter={(e) => openMenu(e.clientX + 12, e.clientY - 12, pinPicker.id, pinPicker.port, count)} onClick={(e) => openMenu(e.clientX + 12, e.clientY - 12, pinPicker.id, pinPicker.port, count)}>{count}<ChevronRight size={14} className="submenu-arrow" /></button>)}
+        {[1, 2, 3, 4].map((count) => {
+          const open = (e: React.MouseEvent<HTMLButtonElement>) => {
+            const r = e.currentTarget.getBoundingClientRect();
+            openMenu(r.right + 4, r.top, pinPicker.id, pinPicker.port, count, true);
+          };
+          return <button key={count} className={menu?.from === pinPicker.id && menu.count === count ? "on" : ""} onMouseDown={(e) => e.preventDefault()} onMouseEnter={open} onClick={open}>{count}<ChevronRight size={14} className="submenu-arrow" /></button>;
+        })}
       </div>}
       {pinEditor && project && canvas.cards.some((card) => card.id === pinEditor.id) && <div className="pin-editor-wrap" style={{
         left: Math.max(8, Math.min(pinEditor.x - (wrapper.current?.getBoundingClientRect().left ?? 0) + 12, (wrapper.current?.clientWidth ?? 400) - 308)),
@@ -1010,7 +1018,7 @@ function Flow({ flowKey, viewports }: { flowKey: string; viewports: Map<string, 
         ...(canvas.layout[cardMenu.id]?.w != null ? [{ label: "Вернуть автоматический размер", icon: Maximize, run: () => editCanvas((c) => { const { x, y } = c.layout[cardMenu.id]; c.layout[cardMenu.id] = { x, y }; }) }] : []),
         { label: "Удалить карточку", icon: Trash2, run: () => { editCanvas((c) => deleteCards(c, [cardMenu.id])); setSelection([]); } },
       ]} onPick={(item) => { setCardMenu(null); item.run?.(); }} onClose={() => setCardMenu(null)} />}
-      {menu && <CreateMenu key={`${menu.x}:${menu.y}`} menu={menu} items={menuItems} onPick={pickMenu} onClose={() => setMenu(null)} />}
+      {menu && <CreateMenu key={`${menu.x}:${menu.y}:${menu.count ?? 1}`} menu={menu} items={menuItems} onPick={pickMenu} onClose={closeMenu} />}
     </div>
   );
 }

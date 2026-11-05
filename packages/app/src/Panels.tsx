@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from "react";
+import { Fragment, useMemo, useRef, useState } from "react";
 import { create } from "zustand";
 import type { Canvas, Card, CardType, Entity, InkFunction, InkListDef, Link, Project, Repeat, TextStatus, Variable as VarDef, VarType } from "@visink/core";
 import { ChevronDown, ChevronRight, ChevronUp, Files, Flag, Search, Users, Variable, X } from "lucide-react";
@@ -246,7 +246,7 @@ function ProjectTree() {
         })}
       </Folder>
       <Folder id="root:files" title="Файлы Ink" count={Object.keys(project.canvases).length}>
-        {files.map(([group, items]) => group === NO_FOLDER ? fileList(items) : <Folder key={group} id={`canvas:${group}`} title={group} count={items.length}>{fileList(items)}</Folder>)}
+        {files.map(([group, items]) => group === NO_FOLDER ? <Fragment key={group}>{fileList(items)}</Fragment> : <Folder key={group} id={`canvas:${group}`} title={group} count={items.length}>{fileList(items)}</Folder>)}
         <button className="wide" onClick={addFile}>+ Файл</button>
       </Folder>
       <Folder id="root:characters" title="Персонажи" count={project.entities.length}>

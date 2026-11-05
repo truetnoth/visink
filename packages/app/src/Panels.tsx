@@ -1048,7 +1048,7 @@ function LinkProps({ link, canvas, canvasKey, project }: { link: Link; canvas: C
       {(link.condition || link.action) && (
         <div className="field-hint pad">осталось со старой версии — перенесите на пин карточки и очистите поле</div>
       )}
-      {link.condition && !link.port && (
+      {link.condition && (
         <ExprField
           label={toPlayer ? "Условие — когда показывать вариант" : "Условие — когда идти по стрелке"}
           value={link.condition}

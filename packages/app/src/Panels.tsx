@@ -135,6 +135,39 @@ export function Library() {
   );
 }
 
+const COLLAPSED_KEY = "visink-collapsed-folders";
+
+/** Свёрнутые папки на панелях слева — удобство этого компьютера, не часть проекта. Одно на все списки. */
+function readCollapsed(): Set<string> {
+  try {
+    return new Set(JSON.parse(localStorage.getItem(COLLAPSED_KEY) ?? "[]"));
+  } catch {
+    return new Set();
+  }
+}
+
+const useCollapsed = create<{ ids: Set<string>; toggle: (id: string) => void }>()((set, get) => ({
+  ids: readCollapsed(),
+  toggle(id) {
+    const ids = new Set(get().ids);
+    if (ids.has(id)) ids.delete(id);
+    else ids.add(id);
+    try {
+      localStorage.setItem(COLLAPSED_KEY, JSON.stringify([...ids]));
+    } catch {
+      // не запомним — не страшно
+    }
+    set({ ids });
+  },
+}));
+
+/** Кнопка-треугольник сворачивания: показывает стрелку при наличии вложенностей, иначе место-заполнитель. */
+function TreeToggle({ id, has }: { id: string; has: boolean }) {
+  const open = useCollapsed((s) => !s.ids.has(id));
+  if (!has) return <span className="tree-toggle-spacer" />;
+  return <button className="tree-toggle" aria-label={open ? "Скрыть вложенности" : "Показать вложенности"} aria-expanded={open} onClick={(e) => { e.stopPropagation(); useCollapsed.getState().toggle(id); }}>{open ? <ChevronDown size={12} /> : <ChevronRight size={12} />}</button>;
+}
+
 function NestedFlowTree({ rootKey, canvas, path }: { rootKey: string; canvas: Canvas; path: string[] }) {
   const { activeCanvas, flowPath, setActiveCanvas } = useStore.getState();
   const collapsed = useCollapsed((s) => s.ids);
@@ -151,7 +184,7 @@ function NestedFlowTree({ rootKey, canvas, path }: { rootKey: string; canvas: Ca
         const title = card.text || card.menuText || card.condition || TYPE_LABEL[card.type];
         return (
           <li key={card.id} className={active ? "on" : ""} onClick={(e) => { e.stopPropagation(); setActiveCanvas(rootKey, nextPath); }}>
-            {hasChildren ? <button className="tree-toggle" aria-label={open ? "Скрыть вложенности" : "Показать вложенности"} aria-expanded={open} onClick={(e) => { e.stopPropagation(); useCollapsed.getState().toggle(collapseId); }}>{open ? <ChevronDown size={12} /> : <ChevronRight size={12} />}</button> : <span className="tree-toggle-spacer" />}
+            <TreeToggle id={collapseId} has={hasChildren} />
             <span className="ellipsis" title={title}>{title}</span>
             {hasChildren && open && <NestedFlowTree rootKey={rootKey} canvas={card.flow!} path={nextPath} />}
           </li>
@@ -194,7 +227,7 @@ function ProjectTree() {
         const collapseId = `flow:${key}`;
         const open = !collapsed.has(collapseId);
         return <li key={key} className={key === active && flowPath.length === 0 ? "on" : ""} title="Двойной щелчок — свойства и переименование" onClick={() => setActiveCanvas(key)} onDoubleClick={() => { setActiveCanvas(key); openEditor(); }}>
-          {hasNested ? <button className="tree-toggle" aria-label={open ? "Скрыть вложенности" : "Показать вложенности"} aria-expanded={open} onClick={(e) => { e.stopPropagation(); useCollapsed.getState().toggle(collapseId); }}>{open ? <ChevronDown size={12} /> : <ChevronRight size={12} />}</button> : <span className="tree-toggle-spacer" />}
+          <TreeToggle id={collapseId} has={hasNested} />
           <span className="ellipsis" title={c.title}>{c.title} <span className="muted mono">{c.id}</span></span>
           {hasNested && open && <NestedFlowTree rootKey={key} canvas={c} path={[]} />}
         </li>;
@@ -289,33 +322,6 @@ function SearchResults({ query }: { query: string }) {
   );
 }
 
-const COLLAPSED_KEY = "visink-collapsed-folders";
-
-/** Свёрнутые папки на панелях слева — удобство этого компьютера, не часть проекта. Одно на все списки. */
-function readCollapsed(): Set<string> {
-  try {
-    return new Set(JSON.parse(localStorage.getItem(COLLAPSED_KEY) ?? "[]"));
-  } catch {
-    return new Set();
-  }
-}
-
-const useCollapsed = create<{ ids: Set<string>; toggle: (id: string) => void }>()((set, get) => ({
-  ids: readCollapsed(),
-  toggle(id) {
-    const ids = new Set(get().ids);
-    if (ids.has(id)) ids.delete(id);
-    else ids.add(id);
-    try {
-      localStorage.setItem(COLLAPSED_KEY, JSON.stringify([...ids]));
-    } catch {
-      // не запомним — не страшно
-    }
-    set({ ids });
-  },
-}));
-
-/** Сворачиваемая папка; id отдельный от названия, чтобы одинаковые названия в разных списках не путались. */
 function Folder({ id, title, count, children }: { id: string; title: string; count: number; children: React.ReactNode }) {
   const open = useCollapsed((s) => !s.ids.has(id));
   return (

@@ -4,7 +4,7 @@ import { temporal } from "zundo";
 import type { Canvas, FlowPath, Project, ProjectFs } from "@visink/core";
 import { canvasAtPath, createProject, flowCards, linkId, loadProject, saveProject, writeBuild } from "@visink/core";
 import type { CheckResult } from "@visink/checker";
-import { checkProject } from "@visink/checker";
+import { checkInBackground } from "./checkClient";
 import { BrowserFs, pickDirectory } from "./browserFs";
 import { TauriFs, askUser, inTauri, pickTauriDirectory } from "./tauriFs";
 import { usePrefs } from "./prefs";
@@ -244,7 +244,7 @@ export const useStore = create<State>()(
           loading = false;
           flushHistory = null;
           useStore.temporal.getState().clear();
-          runCheck();
+          void runCheck();
         } catch (e) {
           loading = false;
           set({ statusNonce: Date.now(), status: `Не удалось открыть: ${(e as Error).message}` });
@@ -271,7 +271,7 @@ export const useStore = create<State>()(
         loading = false;
         flushHistory = null;
         useStore.temporal.getState().clear();
-        runCheck();
+        void runCheck();
       },
 
       requestEdit: (card) => set({ editRequest: { card, nonce: Date.now() } }),
@@ -281,14 +281,14 @@ export const useStore = create<State>()(
         if (!project || saving) return;
         if (!fs) {
           if (auto) return;
-          runCheck();
+          void runCheck();
           set({ statusNonce: Date.now(), status: "Проект в памяти: проверено, но сохранять некуда — откройте или создайте папку проекта" });
           return;
         }
         saving = true;
         try {
           const written = await saveProject(fs, project);
-          const check = checkProject(project);
+          const check = await checkInBackground(project);
           const errors = check.diagnostics.filter((d) => d.severity === "error").length;
           let buildMsg: string;
           if (errors) {
@@ -355,11 +355,13 @@ export const useStore = create<State>()(
 
 let checkTimer: ReturnType<typeof setTimeout> | undefined;
 
-function runCheck() {
+async function runCheck() {
   const project = useStore.getState().project;
   if (!project) return;
   try {
-    useStore.setState({ check: checkProject(project) });
+    const check = await checkInBackground(project);
+    // пока шла проверка, проект поменяли — придёт следующий результат
+    if (useStore.getState().project === project) useStore.setState({ check });
   } catch (e) {
     console.error(e);
   }

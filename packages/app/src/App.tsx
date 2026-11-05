@@ -1,11 +1,10 @@
-import { useEffect, useRef, useState } from "react";
+import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import type { CSSProperties } from "react";
 import { ChevronRight, CircleHelp, FilePlus, FolderOpen, GitBranch, Monitor, Moon, PanelLeft, Play, Redo2, Save, Settings as SettingsIcon, Sun, Undo2, Users, Variable, X } from "lucide-react";
 import { useStore as useZustand } from "zustand";
 import { canvasAtPath } from "@visink/core";
 import { CanvasView, isTyping, TYPE_LABEL } from "./CanvasView";
 import { BottomPanel, Library, Properties } from "./Panels";
-import { CharactersScreen, LogicScreen, TestingScreen } from "./Screens";
 import { recentProjects, redo, reopenLastProject, undo, useStore } from "./store";
 import { askUser, inTauri } from "./tauriFs";
 import { getCurrentWindow } from "@tauri-apps/api/window";
@@ -17,10 +16,13 @@ import { useTheme } from "./theme";
 import type { PanelSizes } from "./ui";
 import { IconButton, Select, Splitter, usePanelSizes } from "./ui";
 
+const LogicScreen = lazy(() => import("./Screens").then((m) => ({ default: m.LogicScreen })));
+const CharactersScreen = lazy(() => import("./Screens").then((m) => ({ default: m.CharactersScreen })));
+const TestingScreen = lazy(() => import("./Screens").then((m) => ({ default: m.TestingScreen })));
+
 const THEME_NEXT: Record<ThemeMode, ThemeMode> = { system: "light", light: "dark", dark: "system" };
 const THEME_LABEL: Record<ThemeMode, string> = { system: "системная", light: "светлая", dark: "тёмная" };
 const THEME_ICON = { system: Monitor, light: Sun, dark: Moon };
-import { demoProject } from "../../checker/test/fixtures";
 
 type Panels = ReturnType<typeof usePanelSizes>;
 const isError = (text: string) => /^(Ошибка|Не удалось)/.test(text);
@@ -136,7 +138,7 @@ function About({ onClose }: { onClose: () => void }) {
       <tr><td>Ctrl+Z / Ctrl+Shift+Z</td><td>отменить / вернуть</td></tr>
       <tr><td>Ctrl+S</td><td>сохранить и собрать ink</td></tr>
     </tbody></table>
-    <div className="row"><button onClick={() => { onClose(); useStore.getState().openInMemory(demoProject()); }}>Открыть демо-проект</button><span className="muted">в памяти, без сохранения</span></div>
+    <div className="row"><button onClick={async () => { onClose(); const { demoProject } = await import("../../checker/test/fixtures"); useStore.getState().openInMemory(demoProject()); }}>Открыть демо-проект</button><span className="muted">в памяти, без сохранения</span></div>
   </div></div>;
 }
 
@@ -238,9 +240,9 @@ export function App() {
           <div className="canvas-screen" style={{ display: view === "canvas" ? "flex" : "none" }} aria-hidden={view !== "canvas"}>
             <CanvasView />
           </div>
-          {view === "logic" && <LogicScreen />}
-          {view === "characters" && <CharactersScreen />}
-          {view === "testing" && <TestingScreen />}
+          {view === "logic" && <Suspense fallback={<div className="empty-state">Загрузка…</div>}><LogicScreen /></Suspense>}
+          {view === "characters" && <Suspense fallback={<div className="empty-state">Загрузка…</div>}><CharactersScreen /></Suspense>}
+          {view === "testing" && <Suspense fallback={<div className="empty-state">Загрузка…</div>}><TestingScreen /></Suspense>}
           {view === "canvas" && <BottomPanel open={sizes.showDock} onToggle={(open) => toggle("showDock", open)} splitter={<Splitter direction="row" onDrag={drag((o, d) => ({ dock: o.dock - d }))} onReset={() => reset("dock")} />} />}
         </main>
       </div>

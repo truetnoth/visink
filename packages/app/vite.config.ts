@@ -5,4 +5,15 @@ export default defineConfig({
   plugins: [react()],
   server: { port: 5173 },
   worker: { format: "es" },
+  build: {
+    rollupOptions: {
+      output: {
+        manualChunks: {
+          react: ["react", "react-dom"],
+          flow: ["@xyflow/react"],
+          inkjs: ["inkjs"],
+        },
+      },
+    },
+  },
 });

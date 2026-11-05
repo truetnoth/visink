@@ -446,6 +446,14 @@ function Flow({ flowKey, viewports }: { flowKey: string; viewports: Map<string, 
   const { editCanvas, setSelection, focusCard, requestEdit } = useStore.getState();
   const { screenToFlowPosition, setCenter, fitView, getViewport } = useReactFlow();
   const wrapper = useRef<HTMLDivElement>(null);
+  /** Положение поповера от пина: ограничено рамками холста. */
+  const popoverAt = (p: PinPoint, w: number, h: number, dx = 12, dy = 0) => {
+    const rect = wrapper.current?.getBoundingClientRect();
+    return {
+      left: Math.max(8, Math.min(p.x - (rect?.left ?? 0) + dx, (rect?.width ?? 400) - w)),
+      top: Math.max(8, Math.min(p.y - (rect?.top ?? 0) + dy, (rect?.height ?? 400) - h)),
+    };
+  };
   const [pinPicker, setPinPicker] = useState<{ id: string; port?: "yes" | "no"; x: number; y: number } | null>(null);
   const [pinEditor, setPinEditor] = useState<PinEditorState | null>(null);
   const [menu, setMenu] = useState<MenuState | null>(null);
@@ -964,10 +972,7 @@ function Flow({ flowKey, viewports }: { flowKey: string; viewports: Map<string, 
           <IconButton icon={Magnet} className={`toggle ${snap ? "on" : ""}`} label={snap ? "Привязка к сетке" : "Свободное перемещение"} onClick={() => usePrefs.getState().set({ snap: !snap })} />
         </Panel>
       </ReactFlow>
-      {pinPicker && <div className="create-menu pin-count-menu" style={{
-        left: Math.max(8, Math.min(pinPicker.x - (wrapper.current?.getBoundingClientRect().left ?? 0) + 12, (wrapper.current?.clientWidth ?? 400) - 70)),
-        top: Math.max(8, Math.min(pinPicker.y - (wrapper.current?.getBoundingClientRect().top ?? 0), (wrapper.current?.clientHeight ?? 400) - 170)),
-      }} onContextMenu={(e) => e.preventDefault()}>
+      {pinPicker && <div className="create-menu pin-count-menu" style={popoverAt(pinPicker, 70, 170)} onContextMenu={(e) => e.preventDefault()}>
         <div className="pin-count-title">Новых связей</div>
         {[1, 2, 3, 4].map((count) => {
           const open = (e: React.MouseEvent<HTMLButtonElement>) => {
@@ -977,10 +982,7 @@ function Flow({ flowKey, viewports }: { flowKey: string; viewports: Map<string, 
           return <button key={count} className={menu?.from === pinPicker.id && menu.count === count ? "on" : ""} onMouseDown={(e) => e.preventDefault()} onMouseEnter={open} onClick={open}>{count}<ChevronRight size={14} className="submenu-arrow" /></button>;
         })}
       </div>}
-      {pinEditor && project && canvas.cards.some((card) => card.id === pinEditor.id) && <div className="pin-editor-wrap" style={{
-        left: Math.max(8, Math.min(pinEditor.x - (wrapper.current?.getBoundingClientRect().left ?? 0) + 12, (wrapper.current?.clientWidth ?? 400) - 308)),
-        top: Math.max(8, Math.min(pinEditor.y - (wrapper.current?.getBoundingClientRect().top ?? 0) + 12, (wrapper.current?.clientHeight ?? 400) - 190)),
-      }} onMouseDown={(e) => e.stopPropagation()}><PinEditor card={canvas.cards.find((card) => card.id === pinEditor.id)!} field={pinEditor.field} project={project} onClose={() => setPinEditor(null)} onCommit={(value) => {
+      {pinEditor && project && canvas.cards.some((card) => card.id === pinEditor.id) && <div className="pin-editor-wrap" style={popoverAt(pinEditor, 308, 190, 12, 12)} onMouseDown={(e) => e.stopPropagation()}><PinEditor card={canvas.cards.find((card) => card.id === pinEditor.id)!} field={pinEditor.field} project={project} onClose={() => setPinEditor(null)} onCommit={(value) => {
         editCanvas((c) => {
           const target = c.cards.find((card) => card.id === pinEditor.id);
           if (!target) return;

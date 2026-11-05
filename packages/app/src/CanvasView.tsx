@@ -85,6 +85,8 @@ const TYPE_COLOR: Record<CardType, string> = {
 const COMPACT_W: Partial<Record<CardType, number>> = { hub: 180, jump: 220 };
 /** Компактные карточки (хаб, переход): без тела и без запроса на ввод при создании. */
 const isCompact = (type?: string) => type === "hub" || type === "jump";
+/** Порог «щелчок, а не протяжка» для выходного пина. */
+const CLICK_MS = 240;
 
 export function isTyping() {
   const el = document.activeElement as HTMLElement | null;
@@ -251,6 +253,12 @@ const CardNode = memo(function CardNode({ id, data, selected, width, height }: N
     clearPinTimer();
     pinTimer.current = window.setTimeout(() => data.onBranch(card.id, port, point), delay);
   };
+  // РЕШЕНИЕ ПОЛЬЗОВАТЕЛЯ: меню 1–4 открывается только по щелчку, наведение на пин ничего не открывает.
+  const outPinHandlers = (port?: "yes" | "no") => ({
+    onPointerDown: clearPinTimer,
+    onClick: (e: React.MouseEvent) => branch(port, { x: e.clientX, y: e.clientY }, CLICK_MS),
+    onDoubleClick: (e: React.MouseEvent) => openLogic("action", { x: e.clientX, y: e.clientY }),
+  });
 
   return (
     <div className={`card card-${card.type} ${player ? "player" : ""} ${selected ? "selected" : ""} ${fixedHeight ? "fixed-h" : ""}`} style={{ ["--speaker" as string]: color }} onMouseEnter={() => setHovered(true)} onMouseLeave={() => setHovered(false)}>
@@ -294,10 +302,10 @@ const CardNode = memo(function CardNode({ id, data, selected, width, height }: N
         {!outPin && action.map((l, i) => <div key={i} className="card-action mono">{l}</div>)}
       </div>}
       {card.type === "condition" ? <>
-        <Handle type="source" id="yes" position={Position.Right} style={{ top: "40%" }} className="pin pin-out pin-yes" title="Выход «да»: щелчок — 1–4 карточки, двойной щелчок — действие до проверки" onPointerDown={clearPinTimer} onMouseEnter={(e) => branch("yes", { x: e.clientX, y: e.clientY }, 750)} onMouseLeave={clearPinTimer} onClick={(e) => branch("yes", { x: e.clientX, y: e.clientY }, 240)} onDoubleClick={(e) => openLogic("action", { x: e.clientX, y: e.clientY })} />
-        <Handle type="source" id="no" position={Position.Right} style={{ top: "75%" }} className="pin pin-out pin-no" title="Выход «нет»: щелчок — 1–4 карточки, двойной щелчок — действие до проверки" onPointerDown={clearPinTimer} onMouseEnter={(e) => branch("no", { x: e.clientX, y: e.clientY }, 750)} onMouseLeave={clearPinTimer} onClick={(e) => branch("no", { x: e.clientX, y: e.clientY }, 240)} onDoubleClick={(e) => openLogic("action", { x: e.clientX, y: e.clientY })} />
+        <Handle type="source" id="yes" position={Position.Right} style={{ top: "40%" }} className="pin pin-out pin-yes" title="Выход «да»: щелчок — 1–4 карточки, двойной щелчок — действие до проверки" {...outPinHandlers("yes")} />
+        <Handle type="source" id="no" position={Position.Right} style={{ top: "75%" }} className="pin pin-out pin-no" title="Выход «нет»: щелчок — 1–4 карточки, двойной щелчок — действие до проверки" {...outPinHandlers("no")} />
         <span className="port-label" style={{ top: "calc(40% - 20px)" }}>да</span><span className="port-label" style={{ top: "calc(75% - 20px)" }}>нет</span>
-      </> : outPin ? <Handle type="source" position={Position.Right} style={{ top: "50%" }} className={`pin pin-out ${action.length ? "has-logic act" : ""}`} title="Выход: тяните стрелку; щелчок — 1–4 карточки, двойной щелчок — действие" onPointerDown={clearPinTimer} onMouseEnter={(e) => branch(undefined, { x: e.clientX, y: e.clientY }, 750)} onMouseLeave={clearPinTimer} onClick={(e) => branch(undefined, { x: e.clientX, y: e.clientY }, 240)} onDoubleClick={(e) => openLogic("action", { x: e.clientX, y: e.clientY })} /> : null}
+      </> : outPin ? <Handle type="source" position={Position.Right} style={{ top: "50%" }} className={`pin pin-out ${action.length ? "has-logic act" : ""}`} title="Выход: тяните стрелку; щелчок — 1–4 карточки, двойной щелчок — действие" {...outPinHandlers()} /> : null}
     </div>
   );
 });

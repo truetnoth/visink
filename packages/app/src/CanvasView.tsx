@@ -25,6 +25,7 @@ import type { Card, CardType, Entity, Project } from "@visink/core";
 import { canvasAtPath, flowCards, isPlayerCard, linkId } from "@visink/core";
 import { actionLines, rootCard } from "@visink/compiler";
 import { useStore } from "./store";
+import { mergeEdges, mergeNodes } from "./canvasNodes";
 import {
   CARD_W,
   addBranchCards,
@@ -499,9 +500,10 @@ function Flow({ flowKey, viewports }: { flowKey: string; viewports: Map<string, 
   const activeDrafts = useMemo<DraftLink[]>(() => menu?.from ? [{ id: "draft:menu", from: menu.from, ...(menu.port ? { port: menu.port } : {}), x: menu.at.x, y: menu.at.y }] : [], [menu]);
 
   // Выделением владеет React Flow: узлы пересобираются только при правке проекта,
-  // а выделение и размеры переносятся со старых узлов.
+  // неизменённые карточки остаются теми же объектами (см. mergeNodes) — memo не сбрасывается.
   const derivedNodes = useMemo<Node[]>(() => {
     if (!canvas || !project) return [];
+    const entities = new Map(project.entities.map((e) => [e.id, e]));
     const cards: Node<CardData>[] = canvas.cards.map((card) => {
       const pr = problems.get(card.id);
       const compactWidth = COMPACT_W[card.type];
@@ -513,7 +515,7 @@ function Flow({ flowKey, viewports }: { flowKey: string; viewports: Map<string, 
         ...(compactWidth == null && canvas.layout[card.id]?.h != null ? { height: canvas.layout[card.id]!.h } : {}),
         data: {
           card,
-          speaker: project.entities.find((e) => e.id === card.speaker),
+          speaker: card.speaker ? entities.get(card.speaker) : undefined,
           player: isPlayerCard(project, card),
           isStart: canvas.start === card.id,
           fixedHeight: compactWidth == null && canvas.layout[card.id]?.h != null,
@@ -532,14 +534,7 @@ function Flow({ flowKey, viewports }: { flowKey: string; viewports: Map<string, 
 
   const [nodes, setNodes, onNodesChange] = useNodesState<Node>(derivedNodes);
   useEffect(() => {
-    const sel = new Set(useStore.getState().selection);
-    setNodes((prev) => {
-      const old = new Map(prev.map((n) => [n.id, n]));
-      return derivedNodes.map((n) => {
-        const o = old.get(n.id);
-        return { ...n, selected: o ? !!o.selected : sel.has(n.id), ...(o?.measured ? { measured: o.measured } : {}) };
-      });
-    });
+    setNodes((prev) => mergeNodes(prev, derivedNodes, new Set(useStore.getState().selection)));
   }, [derivedNodes, setNodes]);
 
   // выделение поменяли снаружи (поиск, новая карточка, «удалить выбранные») — отразить на холсте
@@ -567,11 +562,7 @@ function Flow({ flowKey, viewports }: { flowKey: string; viewports: Map<string, 
 
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge<EdgeData>>(derivedEdges);
   useEffect(() => {
-    const links = new Set(useStore.getState().selectedLinks);
-    setEdges((prev) => {
-      const old = new Map(prev.map((e) => [e.id, e]));
-      return derivedEdges.map((e) => ({ ...e, selected: old.has(e.id) ? !!old.get(e.id)!.selected : links.has(e.id) }));
-    });
+    setEdges((prev) => mergeEdges(prev, derivedEdges, new Set(useStore.getState().selectedLinks)));
   }, [derivedEdges, setEdges]);
 
   // стрелки выделили снаружи (поиск, «где используется», проблемы) — отразить на холсте

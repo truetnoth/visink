@@ -73,6 +73,8 @@ interface State {
   setView: (view: State["view"]) => void;
   openEditor: () => void;
   closeEditor: () => void;
+  /** настройки карточки: одиночная становится выделением, группа сохраняется */
+  openCardSettings: (id: string) => void;
   setSelection: (ids: string[], link?: string | null, links?: string[]) => void;
   selectEntity: (id: string | null) => void;
   inspectVariable: (kind: "var" | "list" | "func", name: string | null, owner?: string) => void;
@@ -143,6 +145,11 @@ export const useStore = create<State>()(
       setView: (view) => set({ view, editorOpen: false }),
       openEditor: () => set({ editorOpen: true }),
       closeEditor: () => set({ editorOpen: false }),
+      openCardSettings(id) {
+        const { selection, setSelection } = get();
+        if (!(selection.length > 1 && selection.includes(id))) setSelection([id]);
+        set({ editorOpen: true });
+      },
       setSelection: (ids, link = null, links = link ? [link] : []) => {
         const state = get();
         const cur = state.selection;

@@ -270,9 +270,7 @@ const CardNode = memo(function CardNode({ id, data, selected, width, height }: N
       {problem && <span className={`problem-badge ${problem}`} title={problemText}>!{problemCount && problemCount > 1 ? problemCount : ""}</span>}
       <div className="card-head" title={`id: ${card.id} · двойной щелчок — настройки`} onDoubleClick={(e) => {
         e.stopPropagation();
-        const state = useStore.getState();
-        if (!(state.selection.length > 1 && state.selection.includes(card.id))) state.setSelection([card.id]);
-        state.openEditor();
+        useStore.getState().openCardSettings(card.id);
       }}>
         {isStart && <span className="chip" title="Начало файла"><Flag size={11} /></span>}
         <span className="card-type">{headLabel}</span>
@@ -984,11 +982,7 @@ function Flow({ flowKey, viewports }: { flowKey: string; viewports: Map<string, 
         setPinEditor(null);
       }} /></div>}
       {cardMenu && canvas && <CreateMenu key={`card:${cardMenu.id}`} menu={{ x: cardMenu.x, y: cardMenu.y, at: { x: 0, y: 0 } }} items={[
-        { label: "Настройки карточки", icon: GitBranch, run: () => {
-          const state = useStore.getState();
-          if (!(state.selection.length > 1 && state.selection.includes(cardMenu.id))) setSelection([cardMenu.id]);
-          state.openEditor();
-        } },
+        { label: "Настройки карточки", icon: GitBranch, run: () => useStore.getState().openCardSettings(cardMenu.id) },
         ...(canvas.cards.find((c) => c.id === cardMenu.id)?.flow ? [{ label: "Открыть вложенность", icon: Layers, run: () => {
           if (key) useStore.getState().setActiveCanvas(key, [...flowPath, cardMenu.id]);
         } }] : []),

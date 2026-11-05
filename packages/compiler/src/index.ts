@@ -83,7 +83,7 @@ function gateOf(card: Card): string {
   return card.condition?.trim() ?? "";
 }
 
-function actionLines(action: string | undefined): string[] {
+export function actionLines(action: string | undefined): string[] {
   if (!action) return [];
   return action
     .split("\n")

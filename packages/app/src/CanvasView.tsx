@@ -23,7 +23,7 @@ import type { LucideIcon } from "lucide-react";
 import { ArrowRightFromLine, ChevronRight, Code, Flag, GitBranch, Layers, LayoutGrid, Magnet, Maximize, MessageSquare, Repeat, StickyNote, Trash2, User } from "lucide-react";
 import type { Card, CardType, Entity, Project } from "@visink/core";
 import { canvasAtPath, flowCards, isPlayerCard, linkId } from "@visink/core";
-import { rootCard } from "@visink/compiler";
+import { actionLines, rootCard } from "@visink/compiler";
 import { useStore } from "./store";
 import {
   CARD_W,
@@ -206,14 +206,6 @@ const InlineText = memo(function InlineText({
   );
 });
 
-/** Строки действия в виде ink: тильду можно не писать. */
-const actionLinesOf = (action?: string) =>
-  action
-    ?.split("\n")
-    .map((l) => l.trim())
-    .filter(Boolean)
-    .map((l) => (l.startsWith("~") ? l : `~ ${l}`)) ?? [];
-
 /** Аватарка спикера: портрет, если есть, иначе квадрат его цвета. */
 function Avatar({ speaker }: { speaker?: Entity }) {
   const url = usePortrait(speaker?.portrait);
@@ -234,7 +226,7 @@ const CardNode = memo(function CardNode({ id, data, selected, width, height }: N
   const multi = useStore((s) => selected && s.selection.length > 1);
   const color = card.type === "line" ? speaker?.color ?? "var(--service)" : TYPE_COLOR[card.type];
   const Icon = player ? User : TYPE_ICON[card.type];
-  const action = actionLinesOf(card.action);
+  const action = actionLines(card.action);
   const gate = card.type !== "condition" ? card.condition?.trim() : "";
   const outPin = card.type === "line" || card.type === "hub" || card.type === "flow" || card.type === "ink";
   const compact = card.type === "hub" || card.type === "jump";
@@ -372,7 +364,7 @@ const LogicEdge = memo(function LogicEdge(props: EdgeProps<Edge<EdgeData>>) {
     y = top;
   }
   const cond = data?.condition?.trim();
-  const action = actionLinesOf(data?.action);
+  const action = actionLines(data?.action);
   return <>
     <BaseEdge id={id} path={path} markerEnd={markerEnd} style={{ ...style, strokeWidth: selected ? 3 : 2.25, strokeOpacity: 1 }} interactionWidth={28} />
     {(cond || action.length > 0) && <EdgeLabelRenderer><div className={`edge-logic nodrag nopan ${selected ? "selected" : ""} ${data?.error ? "error" : ""}`} style={{ transform: `translate(-50%, -50%) translate(${x}px, ${y}px)` }} onClick={(e) => select(e.shiftKey || e.metaKey || e.ctrlKey)} onDoubleClick={() => { select(); useStore.getState().openEditor(); setTimeout(() => (document.querySelector(".link-props input, .link-props textarea") as HTMLElement | null)?.focus(), 50); }}>

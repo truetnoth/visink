@@ -1,6 +1,6 @@
 // Операции правки проекта. Все мутируют черновик (копию), store сам делает копию и пишет историю.
 import type { Canvas, Card, CardType, Link, Note, Point, Project } from "@visink/core";
-import { canvasPath, createCanvas, createCard, flowCards, guessStart, isPlayerCard, newCardId, newNoteId, toInkName } from "@visink/core";
+import { canvasPath, createCanvas, createCard, flowCards, guessStart, isPlayerCard, linkId, newCardId, newNoteId, toInkName } from "@visink/core";
 
 export const CARD_W = 280;
 export const COL = 360;
@@ -92,9 +92,14 @@ export function deleteCards(canvas: Canvas, ids: string[]) {
   reorderLinks(canvas);
 }
 
-export function deleteLink(canvas: Canvas, from: string, to: string, port?: string) {
-  canvas.links = canvas.links.filter((l) => !(l.from === from && l.to === to && (l.port ?? undefined) === (port ?? undefined)));
+export function deleteLinks(canvas: Canvas, ids: Iterable<string>) {
+  const set = new Set(ids);
+  canvas.links = canvas.links.filter((l) => !set.has(linkId(l)));
   reorderLinks(canvas);
+}
+
+export function deleteLink(canvas: Canvas, from: string, to: string, port?: string) {
+  deleteLinks(canvas, [linkId({ from, to, port })]);
 }
 
 /** Точка, привязанная к сетке шага grid (1 — просто округлить). */

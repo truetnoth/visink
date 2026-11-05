@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { checkProject } from "@visink/checker";
 import { createCard, linkId } from "@visink/core";
 import { demoProject } from "../../checker/test/fixtures";
-import { addBranchCards, addCanvas, addNestedFlow, alignToGrid, connect, copyFragment, deleteCards, jumpTargets, parseFragment, pasteFragment, renameVariable, replaceIdent, snapPoint, variableUsages } from "../src/ops";
+import { addBranchCards, addCanvas, addNestedFlow, alignToGrid, connect, copyFragment, deleteCards, deleteLinks, jumpTargets, parseFragment, pasteFragment, renameVariable, replaceIdent, snapPoint, variableUsages } from "../src/ops";
 import { searchProject } from "../src/search";
 
 describe("linkId", () => {
@@ -93,6 +93,16 @@ describe("начало файла", () => {
     delete p.canvases.dean.start;
     const r = checkProject(p);
     expect(r.diagnostics).toContainEqual(expect.objectContaining({ code: "no-start", canvas: "dean", card: "c1" }));
+  });
+});
+
+describe("deleteLinks", () => {
+  it("deleteLinks удаляет стрелки по id и перенумеровывает порядок", () => {
+    const c = demoProject().canvases.advisor;
+    deleteLinks(c, ["a8>a9>yes", "a2>a3>"]);
+    expect(c.links.some((l) => l.from === "a8" && l.to === "a9")).toBe(false);
+    expect(c.links.some((l) => l.from === "a2" && l.to === "a3")).toBe(false);
+    expect(c.links.filter((l) => l.from === "a2").map((l) => l.order)).toEqual([0, 1, 2]);
   });
 });
 

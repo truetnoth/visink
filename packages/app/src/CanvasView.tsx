@@ -50,7 +50,7 @@ import { useTheme } from "./theme";
 import { CodeInput, IconButton } from "./ui";
 
 type PinPoint = { x: number; y: number };
-type CardData = { card: Card; speaker?: Entity; player: boolean; isStart: boolean; fixedHeight: boolean; problem?: "error" | "warning"; problemText?: string; problemCount?: number; onPin: (id: string, field: "condition" | "action", port: "yes" | "no" | undefined, point: PinPoint) => void; onBranch: (id: string, port: "yes" | "no" | undefined, point: PinPoint) => void };
+type CardData = { card: Card; speaker?: Entity; player: boolean; isStart: boolean; fixedHeight: boolean; problem?: "error" | "warning"; problemText?: string; problemCount?: number; onPin: (id: string, field: "condition" | "action", point: PinPoint) => void; onBranch: (id: string, port: "yes" | "no" | undefined, point: PinPoint) => void };
 type NoteData = { id: string; text: string };
 type EdgeData = { condition?: string; action?: string; error?: boolean; draft?: boolean };
 type DraftLink = { id: string; from: string; port?: "yes" | "no"; x: number; y: number };
@@ -241,9 +241,9 @@ const CardNode = memo(function CardNode({ id, data, selected, width, height }: N
   useEffect(() => () => clearTimeout(pinTimer.current), []);
 
   const clearPinTimer = () => clearTimeout(pinTimer.current);
-  const openLogic = (field: "condition" | "action", port: "yes" | "no" | undefined, point: PinPoint) => {
+  const openLogic = (field: "condition" | "action", point: PinPoint) => {
     clearPinTimer();
-    data.onPin(card.id, field, port, point);
+    data.onPin(card.id, field, point);
   };
   const branch = (port: "yes" | "no" | undefined, point: PinPoint, delay: number) => {
     clearPinTimer();
@@ -264,7 +264,7 @@ const CardNode = memo(function CardNode({ id, data, selected, width, height }: N
           editCanvas((c) => { c.layout[card.id] = { x: Math.round(p.x), y: Math.round(p.y), w: Math.round(p.width), h: Math.round(Math.max(minHeight, p.height)) }; });
         }}
       />}
-      <Handle type="target" position={Position.Left} style={{ top: "50%" }} className={`pin pin-in ${gate ? "has-logic cond" : ""}`} title={gate ? `Условие: ${gate}` : "Вход. Щелчок — условие"} onClick={card.type !== "condition" ? (e) => openLogic("condition", undefined, { x: e.clientX, y: e.clientY }) : undefined} />
+      <Handle type="target" position={Position.Left} style={{ top: "50%" }} className={`pin pin-in ${gate ? "has-logic cond" : ""}`} title={gate ? `Условие: ${gate}` : "Вход. Щелчок — условие"} onClick={card.type !== "condition" ? (e) => openLogic("condition", { x: e.clientX, y: e.clientY }) : undefined} />
       {problem && <span className={`problem-badge ${problem}`} title={problemText}>!{problemCount && problemCount > 1 ? problemCount : ""}</span>}
       <div className="card-head" title={`id: ${card.id} · двойной щелчок — настройки`} onDoubleClick={(e) => {
         e.stopPropagation();
@@ -296,10 +296,10 @@ const CardNode = memo(function CardNode({ id, data, selected, width, height }: N
         {!outPin && action.map((l, i) => <div key={i} className="card-action mono">{l}</div>)}
       </div>}
       {card.type === "condition" ? <>
-        <Handle type="source" id="yes" position={Position.Right} style={{ top: "40%" }} className="pin pin-out pin-yes" title="Выход «да»: щелчок или наведение — 1–4 карточки, двойной щелчок — действие" onPointerDown={clearPinTimer} onMouseEnter={(e) => branch("yes", { x: e.clientX, y: e.clientY }, 750)} onMouseLeave={clearPinTimer} onClick={(e) => branch("yes", { x: e.clientX, y: e.clientY }, 240)} onDoubleClick={(e) => openLogic("action", "yes", { x: e.clientX, y: e.clientY })} />
-        <Handle type="source" id="no" position={Position.Right} style={{ top: "75%" }} className="pin pin-out pin-no" title="Выход «нет»: щелчок или наведение — 1–4 карточки, двойной щелчок — действие" onPointerDown={clearPinTimer} onMouseEnter={(e) => branch("no", { x: e.clientX, y: e.clientY }, 750)} onMouseLeave={clearPinTimer} onClick={(e) => branch("no", { x: e.clientX, y: e.clientY }, 240)} onDoubleClick={(e) => openLogic("action", "no", { x: e.clientX, y: e.clientY })} />
+        <Handle type="source" id="yes" position={Position.Right} style={{ top: "40%" }} className="pin pin-out pin-yes" title="Выход «да»: щелчок — 1–4 карточки, двойной щелчок — действие до проверки" onPointerDown={clearPinTimer} onMouseEnter={(e) => branch("yes", { x: e.clientX, y: e.clientY }, 750)} onMouseLeave={clearPinTimer} onClick={(e) => branch("yes", { x: e.clientX, y: e.clientY }, 240)} onDoubleClick={(e) => openLogic("action", { x: e.clientX, y: e.clientY })} />
+        <Handle type="source" id="no" position={Position.Right} style={{ top: "75%" }} className="pin pin-out pin-no" title="Выход «нет»: щелчок — 1–4 карточки, двойной щелчок — действие до проверки" onPointerDown={clearPinTimer} onMouseEnter={(e) => branch("no", { x: e.clientX, y: e.clientY }, 750)} onMouseLeave={clearPinTimer} onClick={(e) => branch("no", { x: e.clientX, y: e.clientY }, 240)} onDoubleClick={(e) => openLogic("action", { x: e.clientX, y: e.clientY })} />
         <span className="port-label" style={{ top: "calc(40% - 20px)" }}>да</span><span className="port-label" style={{ top: "calc(75% - 20px)" }}>нет</span>
-      </> : outPin ? <Handle type="source" position={Position.Right} style={{ top: "50%" }} className={`pin pin-out ${action.length ? "has-logic act" : ""}`} title="Выход: тяните стрелку; щелчок или наведение — 1–4 карточки, двойной щелчок — действие" onPointerDown={clearPinTimer} onMouseEnter={(e) => branch(undefined, { x: e.clientX, y: e.clientY }, 750)} onMouseLeave={clearPinTimer} onClick={(e) => branch(undefined, { x: e.clientX, y: e.clientY }, 240)} onDoubleClick={(e) => openLogic("action", undefined, { x: e.clientX, y: e.clientY })} /> : null}
+      </> : outPin ? <Handle type="source" position={Position.Right} style={{ top: "50%" }} className={`pin pin-out ${action.length ? "has-logic act" : ""}`} title="Выход: тяните стрелку; щелчок — 1–4 карточки, двойной щелчок — действие" onPointerDown={clearPinTimer} onMouseEnter={(e) => branch(undefined, { x: e.clientX, y: e.clientY }, 750)} onMouseLeave={clearPinTimer} onClick={(e) => branch(undefined, { x: e.clientX, y: e.clientY }, 240)} onDoubleClick={(e) => openLogic("action", { x: e.clientX, y: e.clientY })} /> : null}
     </div>
   );
 });
@@ -382,7 +382,7 @@ const edgeTypes = { logic: LogicEdge };
 
 type MenuItem = { label: string; color?: string; icon: LucideIcon; type?: CardType | "note"; init?: Partial<Card>; run?: () => void; children?: MenuItem[] };
 type MenuState = { x: number; y: number; at: { x: number; y: number }; from?: string; port?: "yes" | "no"; count?: number };
-type PinEditorState = { id: string; field: "condition" | "action"; port?: "yes" | "no"; x: number; y: number };
+type PinEditorState = { id: string; field: "condition" | "action"; x: number; y: number };
 
 function CreateMenu({ menu, items, onPick, onClose }: { menu: MenuState; items: MenuItem[]; onPick: (item: MenuItem) => void; onClose: () => void }) {
   const [active, setActive] = useState(0);
@@ -411,6 +411,7 @@ function PinEditor({ card, field, project, onCommit, onClose }: { card: Card; fi
   const [value, setValue] = useState(card[field] ?? "");
   const ref = useRef<HTMLDivElement>(null);
   useEffect(() => { ref.current?.querySelector<HTMLElement>("input, textarea")?.focus(); }, []);
+  const title = field === "condition" ? "Условие на входе" : card.type === "condition" ? "Действие до проверки условия" : "Действие на выходе";
   return <div ref={ref} className="pin-editor" onKeyDown={(e) => {
     e.stopPropagation();
     if (e.defaultPrevented) return;
@@ -420,7 +421,7 @@ function PinEditor({ card, field, project, onCommit, onClose }: { card: Card; fi
       onCommit(value);
     }
   }}>
-    <div className="pin-editor-title">{field === "condition" ? "Условие на входе" : "Действие на выходе"}</div>
+    <div className="pin-editor-title">{title}</div>
     <CodeInput value={value} onChange={setValue} project={project} multiline={field === "action"} rows={3} placeholder={field === "condition" ? "например: trust > 0" : "по строке, тильда не нужна"} />
     <div className="pin-editor-actions"><button onClick={onClose}>Отмена</button><button className="primary" onClick={() => onCommit(value)}>ОК</button></div>
   </div>;
@@ -460,10 +461,10 @@ function Flow({ flowKey, viewports }: { flowKey: string; viewports: Map<string, 
     return map;
   }, [check, key]);
 
-  const onPin = useCallback((id: string, field: "condition" | "action", port: "yes" | "no" | undefined, point: PinPoint) => {
+  const onPin = useCallback((id: string, field: "condition" | "action", point: PinPoint) => {
     setPinPicker(null);
     setMenu(null);
-    setPinEditor({ id, field, ...(port ? { port } : {}), ...point });
+    setPinEditor({ id, field, ...point });
   }, []);
   const onBranch = useCallback((id: string, port: "yes" | "no" | undefined, point: PinPoint) => {
     setPinEditor(null);

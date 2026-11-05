@@ -1,4 +1,5 @@
-# Релиз: тег v* (или ручной запуск) — сборка Visink для macOS и Windows и выкладка в GitHub Release.
+# Релиз: тег v* (или ручной запуск) — сборка Visink для macOS и Windows, выкладка в GitHub Release
+# и latest.json для автообновления (сборки подписаны ключом из секрета TAURI_SIGNING_PRIVATE_KEY).
 name: release
 
 on:
@@ -38,9 +39,13 @@ jobs:
 
       - run: npm test
 
+      - run: npm run typecheck
+
       - uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
           projectPath: packages/desktop
           tauriScript: npx tauri
@@ -48,7 +53,8 @@ jobs:
           tagName: ${{ github.ref_type == 'tag' && github.ref_name || 'v__VERSION__' }}
           releaseName: Visink ${{ github.ref_type == 'tag' && github.ref_name || 'v__VERSION__' }}
           releaseBody: |
-            Сборки для macOS (Apple Silicon, .dmg) и Windows (установщик .exe).
+            Сборки для macOS (Apple Silicon, .dmg) и Windows (установщик .exe). Установленный Visink сам предложит обновиться при запуске.
             Сборки не подписаны: на macOS после установки выполните `xattr -cr /Applications/Visink.app`, на Windows в SmartScreen — «Подробнее» → «Выполнить в любом случае».
           releaseDraft: false
           prerelease: false
+          includeUpdaterJson: true

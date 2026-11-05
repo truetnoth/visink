@@ -1,7 +1,19 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Главное окно: выбор папки и свои команды работы с файлами проекта",
-  "windows": ["main"],
-  "permissions": ["core:default", "dialog:allow-open", "dialog:allow-ask", "dialog:allow-confirm", "core:window:allow-set-title", "core:window:allow-close", "core:window:allow-destroy"]
+  "description": "Главное окно: выбор папки, свои команды работы с файлами проекта и автообновление",
+  "windows": [
+    "main"
+  ],
+  "permissions": [
+    "core:default",
+    "dialog:allow-open",
+    "dialog:allow-ask",
+    "dialog:allow-confirm",
+    "core:window:allow-set-title",
+    "core:window:allow-close",
+    "core:window:allow-destroy",
+    "updater:default",
+    "process:allow-restart"
+  ]
 }

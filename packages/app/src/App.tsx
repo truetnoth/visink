@@ -152,6 +152,8 @@ export function App() {
   const [settings, setSettings] = useState(false);
 
   useEffect(() => { void reopenLastProject(); }, []);
+  // обновления — только в приложении, модуль подгружается отдельно
+  useEffect(() => { if (inTauri) void import("./updater").then((m) => m.checkForUpdates()); }, []);
   useEffect(() => {
     if (!inTauri) return;
     void getCurrentWindow().setTitle(project ? `${project.settings.name}${dirty ? " •" : ""} — Visink` : "Visink");

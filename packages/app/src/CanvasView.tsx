@@ -83,6 +83,8 @@ const TYPE_COLOR: Record<CardType, string> = {
   ink: "#56707a",
 };
 const COMPACT_W: Partial<Record<CardType, number>> = { hub: 180, jump: 220 };
+/** Компактные карточки (хаб, переход): без тела и без запроса на ввод при создании. */
+const isCompact = (type?: string) => type === "hub" || type === "jump";
 
 export function isTyping() {
   const el = document.activeElement as HTMLElement | null;
@@ -229,7 +231,7 @@ const CardNode = memo(function CardNode({ id, data, selected, width, height }: N
   const action = actionLines(card.action);
   const gate = card.type !== "condition" ? card.condition?.trim() : "";
   const outPin = card.type === "line" || card.type === "hub" || card.type === "flow" || card.type === "ink";
-  const compact = card.type === "hub" || card.type === "jump";
+  const compact = isCompact(card.type);
   const headLabel = card.type === "line" ? speaker?.name ?? "без спикера" : card.type === "hub" && card.text ? `Хаб · ${card.text}` : card.type === "jump" ? `→ ${card.target || "цель?"}` : TYPE_LABEL[card.type];
   const fontSize = usePrefs((s) => s.cardFontSize);
   const content = card.text || card.condition || "";
@@ -288,9 +290,7 @@ const CardNode = memo(function CardNode({ id, data, selected, width, height }: N
         <div className="card-cell"><InlineText card={card} field="stageDirection" locked={multi} placeholder="ремарка…" /></div>
         <div className={`card-cell grow ${card.text ? "has-text" : ""}`}><InlineText card={card} field="text" locked={multi} autoEdit={!player} placeholder={player ? "(реплика не звучит)" : "текст реплики…"} /></div>
       </div> : <div className={`card-body ${multi ? "" : "nodrag"}`}>
-        {card.type === "hub" && <InlineText card={card} field="text" locked={multi} autoEdit placeholder="название хаба…" />}
         {card.type === "condition" && <InlineText card={card} field="condition" locked={multi} autoEdit placeholder="условие?" />}
-        {card.type === "jump" && <div className="card-text mono">→ {card.target || "цель?"}</div>}
         {card.type === "flow" && <InlineText card={card} field="text" locked={multi} autoEdit placeholder="название вложенности…" />}
         {card.type === "ink" && <InlineText card={card} field="text" mono locked={multi} autoEdit placeholder="чистый ink" />}
         {!outPin && action.map((l, i) => <div key={i} className="card-action mono">{l}</div>)}
@@ -689,7 +689,7 @@ function Flow({ flowKey, viewports }: { flowKey: string; viewports: Map<string, 
       });
       if (newIds.length) {
         setSelection([...newIds].sort());
-        if (newIds.length === 1 && item.type !== "note") requestEdit(newIds[0]);
+        if (newIds.length === 1 && item.type !== "note" && !isCompact(item.type)) requestEdit(newIds[0]);
       }
       wrapper.current?.focus();
     },
@@ -803,7 +803,7 @@ function Flow({ flowKey, viewports }: { flowKey: string; viewports: Map<string, 
       });
       if (newId) {
         setSelection([newId]);
-        requestEdit(newId);
+        if (!isCompact(type)) requestEdit(newId);
       }
     },
     [editCanvas, screenToFlowPosition, setSelection, requestEdit, root],
@@ -1016,7 +1016,7 @@ function Flow({ flowKey, viewports }: { flowKey: string; viewports: Map<string, 
           if (key) useStore.getState().setActiveCanvas(key, [...flowPath, cardMenu.id]);
         } }] : []),
         { label: canvas.start === cardMenu.id ? "Уже начало файла" : "Сделать началом файла", icon: Flag, run: () => editCanvas((c) => (c.start = cardMenu.id)) },
-        ...(canvas.layout[cardMenu.id]?.w != null ? [{ label: "Вернуть автоматический размер", icon: Maximize, run: () => editCanvas((c) => { const { x, y } = c.layout[cardMenu.id]; c.layout[cardMenu.id] = { x, y }; }) }] : []),
+        ...(canvas.layout[cardMenu.id]?.w != null && !isCompact(canvas.cards.find((c) => c.id === cardMenu.id)?.type) ? [{ label: "Вернуть автоматический размер", icon: Maximize, run: () => editCanvas((c) => { const { x, y } = c.layout[cardMenu.id]; c.layout[cardMenu.id] = { x, y }; }) }] : []),
         { label: "Удалить карточку", icon: Trash2, run: () => { editCanvas((c) => deleteCards(c, [cardMenu.id])); setSelection([]); } },
       ]} onPick={(item) => { setCardMenu(null); item.run?.(); }} onClose={() => setCardMenu(null)} />}
       {menu && <CreateMenu key={`${menu.x}:${menu.y}:${menu.count ?? 1}`} menu={menu} items={menuItems} onPick={pickMenu} onClose={closeMenu} />}

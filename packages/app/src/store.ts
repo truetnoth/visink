@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import { produce } from "immer";
 import { temporal } from "zundo";
 import type { Canvas, FlowPath, Project, ProjectFs } from "@visink/core";
 import { canvasAtPath, createProject, flowCards, linkId, loadProject, saveProject, writeBuild } from "@visink/core";
@@ -126,9 +127,8 @@ export const useStore = create<State>()(
       edit(fn) {
         const project = get().project;
         if (!project) return;
-        const draft = structuredClone(project);
-        fn(draft);
-        set({ project: draft });
+        // фигурные скобки обязательны: immer бросает ошибку, если рецепт что-то вернёт
+        set({ project: produce(project, (draft) => { fn(draft); }) });
       },
 
       editCanvas(fn) {

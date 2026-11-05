@@ -5,3 +5,7 @@ packages/desktop/src-tauri/target
 packages/desktop/src-tauri/gen
 # личное ТЗ — не в репозиторий
 ТЗ визуальный редактор ink в духе articy.md
+.chrome-ui-check/
+.ui-check.*
+.ui-debug.png
+.hermes/

@@ -53,9 +53,25 @@ export function addNestedFlow(canvas: Canvas, cardId: string): Canvas {
 export function connect(canvas: Canvas, from: string, to: string, port?: "yes" | "no") {
   if (from === to) return;
   if (canvas.links.some((l) => l.from === from && l.to === to && l.port === port)) return;
-  if (port) canvas.links = canvas.links.filter((l) => !(l.from === from && l.port === port));
   canvas.links.push({ from, to, order: 999, kind: "divert", ...(port ? { port } : {}) });
   reorderLinks(canvas);
+}
+
+export function branchPoints(canvas: Canvas, from: string, count: number, grid = 1): Point[] {
+  const at = canvas.layout[from] ?? { x: 0, y: 0 };
+  const total = Math.max(1, Math.min(4, Math.round(count)));
+  return Array.from({ length: total }, (_, i) => snapPoint({
+    x: at.x + (at.w ?? CARD_W) + GAP,
+    y: at.y + (i - (total - 1) / 2) * ROW,
+  }, grid));
+}
+
+export function addBranchCards(canvas: Canvas, from: string, type: CardType, count: number, init: Partial<Card>, root: Canvas, grid: number, port?: "yes" | "no"): Card[] {
+  return branchPoints(canvas, from, count, grid).map((at) => {
+    const card = addCard(canvas, type, at, init, root);
+    connect(canvas, from, card.id, port);
+    return card;
+  });
 }
 
 export function deleteCards(canvas: Canvas, ids: string[]) {

@@ -245,8 +245,7 @@ export function compileCanvas(project: Project, key: string, source: Canvas, dia
   const linkActions = (l: Link, from: Card): Out[] =>
     actionLines(l.action).map((text) => ({ text: `    ${text}`, card: from.id, link: refOf(l) }));
 
-  const routing = (card: Card): Out[] => {
-    const links = outgoing.get(card.id) ?? [];
+  const routing = (card: Card, links = outgoing.get(card.id) ?? []): Out[] => {
     // ветка без продолжения — конец диалога
     if (!links.length) return ["-> DONE"];
     const pairs = links.flatMap((l) => {
@@ -345,22 +344,22 @@ export function compileCanvas(project: Project, key: string, source: Canvas, dia
       }
       case "condition": {
         const links = outgoing.get(card.id) ?? [];
-        const yes = links.find((l) => l.port === "yes");
-        const no = links.find((l) => l.port === "no");
+        const yes = links.filter((l) => l.port === "yes");
+        const no = links.filter((l) => l.port === "no");
         let cond = card.condition?.trim();
         if (!cond) {
           diag("error", "empty-condition", "У карточки-условия не задано условие", card.id);
           cond = "true";
         }
-        const y = yes ? divert(yes.to, card) : "-> DONE";
-        const n = no ? divert(no.to, card) : "-> DONE";
-        for (const l of [yes, no]) {
-          if (l && linkCond(l)) diag("warning", "port-condition", "Условие на выходе «да»/«нет» не используется — только действие", card.id);
-        }
-        const yesActs = yes ? linkActions(yes, card) : [];
-        const noActs = no ? linkActions(no, card) : [];
-        if (!yesActs.length && !noActs.length) return [...actionLines(card.action), `{${cond}: ${y} | ${n}}`];
-        return [...actionLines(card.action), `{ ${cond}:`, ...yesActs, `    ${y}`, "- else:", ...noActs, `    ${n}`, "}"];
+        const indent = (out: Out[]): Out[] => out.map((line) => typeof line === "string" ? `    ${line}` : { ...line, text: `    ${line.text}` });
+        return [
+          ...actionLines(card.action),
+          `{ ${cond}:`,
+          ...indent(routing(card, yes)),
+          "- else:",
+          ...indent(routing(card, no)),
+          "}",
+        ];
       }
       case "jump": {
         const target = card.target?.trim() ?? "";

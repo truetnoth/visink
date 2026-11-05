@@ -54,11 +54,12 @@ function ViewSwitcher() {
   return <nav className="view-switcher" aria-label="Режим работы">
     {VIEWS.map(({ id, label, icon: Icon }) => <button key={id} className={view === id ? "on" : ""} onClick={() => useStore.getState().setView(id)}><Icon size={15} />{label}</button>)}
     {view === "canvas" && root && <div className="flow-breadcrumbs" aria-label="Путь по вложенностям">
-      <button className={!flowPath.length ? "on" : ""} onClick={() => key && useStore.getState().setActiveCanvas(key)}>{root.title}</button>
+      <button className={!flowPath.length ? "on" : ""} title={root.title} onClick={() => key && useStore.getState().setActiveCanvas(key)}>{root.title}</button>
       {flowPath.map((id, i) => {
         const parent = canvasAtPath(root, flowPath.slice(0, i));
         const card = parent?.cards.find((c) => c.id === id);
-        return <span key={`${id}:${i}`}><ChevronRight size={12} /><button className={i === flowPath.length - 1 ? "on" : ""} onClick={() => key && useStore.getState().setActiveCanvas(key, flowPath.slice(0, i + 1))}>{card?.text || card?.condition || TYPE_LABEL[card?.type ?? "hub"]}</button></span>;
+        const title = card?.text || card?.condition || TYPE_LABEL[card?.type ?? "hub"];
+        return <span key={`${id}:${i}`}><ChevronRight size={12} /><button className={i === flowPath.length - 1 ? "on" : ""} title={title} onClick={() => key && useStore.getState().setActiveCanvas(key, flowPath.slice(0, i + 1))}>{title}</button></span>;
       })}
     </div>}
   </nav>;
@@ -117,9 +118,11 @@ function About({ onClose }: { onClose: () => void }) {
     <h3>Как игра запускает диалог</h3><p>Каждый файл — отдельный диалог. Игра вызывает <span className="mono">ChoosePathString("dean")</span> — диалог идёт с карточки-начала. Дополнительная точка входа задаётся в свойствах карточки. Функции «Реализует игра» привязываются через <span className="mono">BindExternalFunction</span>.</p>
     <h3>Горячие клавиши</h3><table className="keys"><tbody>
       <tr><td>Двойной щелчок по пустому месту</td><td>новая реплика</td></tr>
-      <tr><td>Двойной щелчок по карточке</td><td>вложенный поток или свойства</td></tr>
-      <tr><td>Двойной щелчок по пину</td><td>условие или действие</td></tr>
-      <tr><td>Щелчок по пину, затем 1–4</td><td>связи-заготовки</td></tr>
+      <tr><td>Двойной щелчок по шапке карточки</td><td>настройки карточки или выделенной группы</td></tr>
+      <tr><td>Двойной щелчок по телу вложенности</td><td>открыть вложенный поток</td></tr>
+      <tr><td>Щелчок по входу / двойной по выходу</td><td>компактное условие / действие</td></tr>
+      <tr><td>Щелчок или наведение на правый пин</td><td>1–4 новые карточки через каскадное меню</td></tr>
+      <tr><td>Щелчок / Shift+щелчок по стрелке</td><td>выделить одну / несколько стрелок</td></tr>
       <tr><td>Стрелка из карточки в пустоту</td><td>меню: что вставить</td></tr>
       <tr><td>Протянуть по пустому месту</td><td>выделить рамкой</td></tr>
       <tr><td>Cmd/Ctrl + протянуть, два пальца</td><td>двигать холст</td></tr>

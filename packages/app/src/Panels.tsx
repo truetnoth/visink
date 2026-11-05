@@ -137,6 +137,7 @@ export function Library() {
 
 function NestedFlowTree({ rootKey, canvas, path }: { rootKey: string; canvas: Canvas; path: string[] }) {
   const { activeCanvas, flowPath, setActiveCanvas } = useStore.getState();
+  const collapsed = useCollapsed((s) => s.ids);
   const nested = canvas.cards.filter((card) => card.flow);
   if (!nested.length) return null;
   return (
@@ -144,10 +145,15 @@ function NestedFlowTree({ rootKey, canvas, path }: { rootKey: string; canvas: Ca
       {nested.map((card) => {
         const nextPath = [...path, card.id];
         const active = activeCanvas === rootKey && flowPath.length === nextPath.length && flowPath.every((id, i) => id === nextPath[i]);
+        const hasChildren = card.flow!.cards.some((child) => child.flow);
+        const collapseId = `flow:${rootKey}:${nextPath.join("/")}`;
+        const open = !collapsed.has(collapseId);
+        const title = card.text || card.menuText || card.condition || TYPE_LABEL[card.type];
         return (
           <li key={card.id} className={active ? "on" : ""} onClick={(e) => { e.stopPropagation(); setActiveCanvas(rootKey, nextPath); }}>
-            <span className="ellipsis">{card.text || card.menuText || card.condition || TYPE_LABEL[card.type]}</span>
-            <NestedFlowTree rootKey={rootKey} canvas={card.flow!} path={nextPath} />
+            {hasChildren ? <button className="tree-toggle" aria-label={open ? "Скрыть вложенности" : "Показать вложенности"} aria-expanded={open} onClick={(e) => { e.stopPropagation(); useCollapsed.getState().toggle(collapseId); }}>{open ? <ChevronDown size={12} /> : <ChevronRight size={12} />}</button> : <span className="tree-toggle-spacer" />}
+            <span className="ellipsis" title={title}>{title}</span>
+            {hasChildren && open && <NestedFlowTree rootKey={rootKey} canvas={card.flow!} path={nextPath} />}
           </li>
         );
       })}
@@ -180,14 +186,19 @@ function ProjectTree() {
     });
     selectEntity(id);
   };
+  const collapsed = useCollapsed((s) => s.ids);
   const fileList = (items: { key: string; c: Canvas }[]) => (
     <ul className="tree">
-      {items.map(({ key, c }) => (
-        <li key={key} className={key === active && flowPath.length === 0 ? "on" : ""} title="Двойной щелчок — свойства и переименование" onClick={() => setActiveCanvas(key)} onDoubleClick={() => { setActiveCanvas(key); openEditor(); }}>
-          <span className="ellipsis">{c.title} <span className="muted mono">{c.id}</span></span>
-          <NestedFlowTree rootKey={key} canvas={c} path={[]} />
-        </li>
-      ))}
+      {items.map(({ key, c }) => {
+        const hasNested = c.cards.some((card) => card.flow);
+        const collapseId = `flow:${key}`;
+        const open = !collapsed.has(collapseId);
+        return <li key={key} className={key === active && flowPath.length === 0 ? "on" : ""} title="Двойной щелчок — свойства и переименование" onClick={() => setActiveCanvas(key)} onDoubleClick={() => { setActiveCanvas(key); openEditor(); }}>
+          {hasNested ? <button className="tree-toggle" aria-label={open ? "Скрыть вложенности" : "Показать вложенности"} aria-expanded={open} onClick={(e) => { e.stopPropagation(); useCollapsed.getState().toggle(collapseId); }}>{open ? <ChevronDown size={12} /> : <ChevronRight size={12} />}</button> : <span className="tree-toggle-spacer" />}
+          <span className="ellipsis" title={c.title}>{c.title} <span className="muted mono">{c.id}</span></span>
+          {hasNested && open && <NestedFlowTree rootKey={key} canvas={c} path={[]} />}
+        </li>;
+      })}
     </ul>
   );
   return (
@@ -884,7 +895,7 @@ function CardProps({ card, canvas, canvasKey, project }: { card: Card; canvas: C
       <Field label="Тип">
         <Select<CardType> value={card.type} onChange={(t) => set("type", t)} options={(Object.keys(TYPE_LABEL) as CardType[]).filter((t) => (t === "flow") === (card.type === "flow")).map((t) => [t, TYPE_LABEL[t]])} />
       </Field>
-      {(card.type === "flow" || card.type === "hub") && <Field label="Название" hint={card.type === "flow" ? "Двойной щелчок по карточке открывает содержимое. Внутренние концы автоматически ведут на выходы этой карточки." : "Показывается на карточке и в списке целей перехода."}>
+      {(card.type === "flow" || card.type === "hub") && <Field label="Название" hint={card.type === "flow" ? "Двойной щелчок по телу открывает содержимое. Внутренние концы автоматически ведут на выходы этой карточки." : "Показывается на карточке и в списке целей перехода."}>
         <Text value={card.text ?? ""} placeholder={card.type === "flow" ? "Новая вложенность" : "Новый хаб"} onChange={(v) => set("text", v)} />
       </Field>}
 
@@ -1048,7 +1059,7 @@ function LinkProps({ link, canvas, canvasKey, project }: { link: Link; canvas: C
       {link.action && (
         <ExprField label="Действие при переходе (~ …), по строке" value={link.action} onChange={(v) => set("action", v)} project={project} multiline />
       )}
-      {!link.condition && !link.action && <div className="field-hint pad">условие и действие задаются на пинах карточек: щелчок по пину</div>}
+      {!link.condition && !link.action && <div className="field-hint pad">условие — щелчок по входному пину, действие — двойной щелчок по выходному</div>}
       <button
         className="danger"
         onClick={() => {
@@ -1095,6 +1106,9 @@ function MultiCardProps({ canvas, selection, project }: { canvas: Canvas; select
   const repeat = players.length ? common(players, (c) => c.repeat ?? "once") : MIXED;
   const gated = cards.filter((c) => c.type !== "condition");
   const condition = gated.length ? common(gated, (c) => c.condition ?? "") : MIXED;
+  const cardType = common(cards, (c) => c.type);
+  const flowKind = cards.every((c) => c.type === "flow") ? true : cards.every((c) => c.type !== "flow") ? false : null;
+  const typeOptions = flowKind === null ? [] : (Object.keys(TYPE_LABEL) as CardType[]).filter((type) => (type === "flow") === flowKind);
 
   return (
     <div className="props">
@@ -1102,6 +1116,9 @@ function MultiCardProps({ canvas, selection, project }: { canvas: Canvas; select
         Выбрано карточек: {cards.length}
         {notes > 0 && <span className="muted"> + заметок: {notes}</span>}
       </div>
+      {typeOptions.length > 0 && <Field label="Тип всех выбранных">
+        <Select<CardType> value={cardType === MIXED ? null : cardType} onChange={(type) => setAll("type", type)} options={typeOptions.map((type) => [type, TYPE_LABEL[type]])} />
+      </Field>}
       {lines.length > 0 && (
         <>
           <Field label={`Спикер (реплик: ${lines.length})`}>

@@ -2,8 +2,37 @@ import { describe, expect, it } from "vitest";
 import { checkProject } from "@visink/checker";
 import { createCard } from "@visink/core";
 import { demoProject } from "../../checker/test/fixtures";
-import { addCanvas, addNestedFlow, alignToGrid, copyFragment, deleteCards, jumpTargets, parseFragment, pasteFragment, renameVariable, replaceIdent, snapPoint, variableUsages } from "../src/ops";
+import { addBranchCards, addCanvas, addNestedFlow, alignToGrid, connect, copyFragment, deleteCards, jumpTargets, parseFragment, pasteFragment, renameVariable, replaceIdent, snapPoint, variableUsages } from "../src/ops";
 import { searchProject } from "../src/search";
+
+describe("связи условия", () => {
+  it("один порт хранит несколько целей и отбрасывает только точный дубликат", () => {
+    const p = demoProject();
+    const c = p.canvases.advisor;
+    c.cards.push(createCard("a12", "line", { speaker: "ent_advisor", text: "Ещё ветка." }));
+    c.layout.a12 = { x: 900, y: 300 };
+    connect(c, "a8", "a12", "yes");
+    connect(c, "a8", "a12", "yes");
+    expect(c.links.filter((l) => l.from === "a8" && l.port === "yes").map((l) => l.to).sort()).toEqual(["a12", "a9"]);
+    connect(c, "a8", "a12", "no");
+    expect(c.links.filter((l) => l.from === "a8" && l.port === "no").map((l) => l.to).sort()).toEqual(["a10", "a12"]);
+    connect(c, "a8", "a8", "yes");
+    expect(c.links.some((l) => l.from === "a8" && l.to === "a8")).toBe(false);
+  });
+
+  it("пакетно создаёт 1–4 карточки справа и подключает каждую к исходному порту", () => {
+    const p = demoProject();
+    const c = p.canvases.advisor;
+    const created = addBranchCards(c, "a8", "line", 4, { speaker: "ent_advisor" }, c, 20, "yes");
+    expect(created).toHaveLength(4);
+    expect(new Set(created.map((card) => card.id)).size).toBe(4);
+    expect(created.every((card) => c.links.some((l) => l.from === "a8" && l.to === card.id && l.port === "yes"))).toBe(true);
+    const positions = created.map((card) => c.layout[card.id]);
+    expect(new Set(positions.map((point) => point.x)).size).toBe(1);
+    expect(positions.map((point) => point.y)).toEqual([60, 260, 460, 660]);
+    expect(positions.every((point) => point.x % 20 === 0 && point.y % 20 === 0)).toBe(true);
+  });
+});
 
 describe("переменные", () => {
   it("замена имени по границе слова и не в строках", () => {

@@ -120,6 +120,54 @@ describe("логика на стрелках", () => {
     expect(story.variablesState["logic"]).toBe(99);
   });
 
+  it("выходы «да» и «нет» поддерживают несколько вариантов с условиями и действиями", () => {
+    const p = createProject("condition-branches");
+    p.variables.vars.push(
+      { name: "flag", type: "bool", default: true },
+      { name: "allowed", type: "bool", default: false },
+      { name: "logic", type: "int", default: 0 },
+    );
+    const c = createCanvas("scene", "Сцена");
+    c.cards = [
+      createCard("gate", "condition", { condition: "flag" }),
+      createCard("yes_1", "line", { speaker: "ent_player", menuText: "Да, первый", text: "Первый да." }),
+      createCard("yes_2", "line", { speaker: "ent_player", menuText: "Да, второй", text: "Второй да." }),
+      createCard("no_1", "line", { speaker: "ent_player", menuText: "Нет, первый", text: "Первый нет." }),
+      createCard("no_2", "line", { speaker: "ent_player", menuText: "Нет, второй", text: "Второй нет." }),
+    ];
+    c.layout = Object.fromEntries(c.cards.map((card, i) => [card.id, { x: i * 300, y: i * 200 }]));
+    c.start = "gate";
+    c.links = [
+      { from: "gate", to: "yes_1", port: "yes", order: 0, kind: "divert" },
+      { from: "gate", to: "yes_2", port: "yes", order: 1, kind: "divert", condition: "allowed", action: "logic = 99" },
+      { from: "gate", to: "no_1", port: "no", order: 2, kind: "divert" },
+      { from: "gate", to: "no_2", port: "no", order: 3, kind: "divert" },
+    ];
+    p.canvases = { scene: c };
+    const r = checkProject(p);
+    expect(r.diagnostics.filter((d) => d.severity === "error")).toEqual([]);
+
+    const story = new Story(r.storyJson!);
+    story.ChoosePathString("scene");
+    story.ContinueMaximally();
+    expect(story.currentChoices.map((choice) => choice.text)).toEqual(["Да, первый"]);
+
+    const withSecond = new Story(r.storyJson!);
+    withSecond.variablesState["allowed"] = true;
+    withSecond.ChoosePathString("scene");
+    withSecond.ContinueMaximally();
+    expect(withSecond.currentChoices.map((choice) => choice.text)).toEqual(["Да, первый", "Да, второй"]);
+    withSecond.ChooseChoiceIndex(1);
+    expect(withSecond.ContinueMaximally()).toContain("Второй да.");
+    expect(withSecond.variablesState["logic"]).toBe(99);
+
+    const no = new Story(r.storyJson!);
+    no.variablesState["flag"] = false;
+    no.ChoosePathString("scene");
+    no.ContinueMaximally();
+    expect(no.currentChoices.map((choice) => choice.text)).toEqual(["Нет, первый", "Нет, второй"]);
+  });
+
   it("ошибка в условии стрелки попадает на стрелку и карточку-источник", () => {
     const p = demoProject();
     link(p, "dean", "c2", "c3").condition = "dean_trst > 0";

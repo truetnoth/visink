@@ -20,13 +20,14 @@ import {
   useUpdateNodeInternals,
 } from "@xyflow/react";
 import type { LucideIcon } from "lucide-react";
-import { ArrowRightFromLine, ChevronRight, Code, Flag, GitBranch, Layers, LayoutGrid, Magnet, Maximize, MessageSquare, Repeat, StickyNote, Trash2, User, X } from "lucide-react";
-import type { Card, CardType, Entity } from "@visink/core";
+import { ArrowRightFromLine, ChevronRight, Code, Flag, GitBranch, Layers, LayoutGrid, Magnet, Maximize, MessageSquare, Repeat, StickyNote, Trash2, User } from "lucide-react";
+import type { Card, CardType, Entity, Project } from "@visink/core";
 import { canvasAtPath, flowCards, isPlayerCard } from "@visink/core";
 import { rootCard } from "@visink/compiler";
 import { useStore } from "./store";
 import {
   CARD_W,
+  addBranchCards,
   addCard,
   addNextLine,
   addNote,
@@ -46,9 +47,10 @@ import {
 import { GRID, usePrefs } from "./prefs";
 import { usePortrait } from "./portraits";
 import { useTheme } from "./theme";
-import { IconButton } from "./ui";
+import { CodeInput, IconButton } from "./ui";
 
-type CardData = { card: Card; speaker?: Entity; player: boolean; isStart: boolean; fixedHeight: boolean; problem?: "error" | "warning"; problemText?: string; problemCount?: number; onPin: (id: string, field: "condition" | "action", port?: "yes" | "no") => void };
+type PinPoint = { x: number; y: number };
+type CardData = { card: Card; speaker?: Entity; player: boolean; isStart: boolean; fixedHeight: boolean; problem?: "error" | "warning"; problemText?: string; problemCount?: number; onPin: (id: string, field: "condition" | "action", port: "yes" | "no" | undefined, point: PinPoint) => void; onBranch: (id: string, port: "yes" | "no" | undefined, point: PinPoint) => void };
 type NoteData = { id: string; text: string };
 type EdgeData = { condition?: string; action?: string; error?: boolean; draft?: boolean };
 type DraftLink = { id: string; from: string; port?: "yes" | "no"; x: number; y: number };
@@ -80,6 +82,7 @@ const TYPE_COLOR: Record<CardType, string> = {
   flow: "#7464a8",
   ink: "#56707a",
 };
+const COMPACT_W: Partial<Record<CardType, number>> = { hub: 180, jump: 220 };
 
 export function isTyping() {
   const el = document.activeElement as HTMLElement | null;
@@ -234,6 +237,8 @@ const CardNode = memo(function CardNode({ id, data, selected, width, height }: N
   const action = actionLinesOf(card.action);
   const gate = card.type !== "condition" ? card.condition?.trim() : "";
   const outPin = card.type === "line" || card.type === "hub" || card.type === "flow" || card.type === "ink";
+  const compact = card.type === "hub" || card.type === "jump";
+  const headLabel = card.type === "line" ? speaker?.name ?? "без спикера" : card.type === "hub" && card.text ? `Хаб · ${card.text}` : card.type === "jump" ? `→ ${card.target || "цель?"}` : TYPE_LABEL[card.type];
   const fontSize = usePrefs((s) => s.cardFontSize);
   const content = card.text || card.condition || "";
   const chars = Math.max(12, ((width ?? CARD_W) - 24) / (fontSize * 0.54));
@@ -243,23 +248,19 @@ const CardNode = memo(function CardNode({ id, data, selected, width, height }: N
   useLayoutEffect(() => updateNodeInternals(id), [id, width, height, fixedHeight, card.type, player, card.flow, updateNodeInternals]);
   useEffect(() => () => clearTimeout(pinTimer.current), []);
 
-  const openLogic = (field: "condition" | "action") => {
-    clearTimeout(pinTimer.current);
-    useStore.getState().setSelection([card.id]);
-    useStore.getState().openEditor();
-    setTimeout(() => (document.querySelector(`[data-field="${field}"] input, [data-field="${field}"] textarea`) as HTMLElement | null)?.focus(), 60);
+  const clearPinTimer = () => clearTimeout(pinTimer.current);
+  const openLogic = (field: "condition" | "action", port: "yes" | "no" | undefined, point: PinPoint) => {
+    clearPinTimer();
+    data.onPin(card.id, field, port, point);
   };
-  const pinClick = (field: "condition" | "action", port?: "yes" | "no") => {
-    clearTimeout(pinTimer.current);
-    pinTimer.current = window.setTimeout(() => {
-      if (field === "condition") openLogic(field);
-      else data.onPin(card.id, field, port);
-    }, 240);
+  const branch = (port: "yes" | "no" | undefined, point: PinPoint, delay: number) => {
+    clearPinTimer();
+    pinTimer.current = window.setTimeout(() => data.onBranch(card.id, port, point), delay);
   };
 
   return (
     <div className={`card card-${card.type} ${player ? "player" : ""} ${selected ? "selected" : ""} ${fixedHeight ? "fixed-h" : ""}`} style={{ ["--speaker" as string]: color }} onMouseEnter={() => setHovered(true)} onMouseLeave={() => setHovered(false)}>
-      <NodeResizer
+      {!compact && <NodeResizer
         isVisible={selected || hovered || resizing}
         minWidth={card.type === "line" ? 200 : 160}
         minHeight={minHeight}
@@ -270,21 +271,27 @@ const CardNode = memo(function CardNode({ id, data, selected, width, height }: N
           setResizing(false);
           editCanvas((c) => { c.layout[card.id] = { x: Math.round(p.x), y: Math.round(p.y), w: Math.round(p.width), h: Math.round(Math.max(minHeight, p.height)) }; });
         }}
-      />
-      <Handle type="target" position={Position.Left} style={{ top: "50%" }} className={`pin pin-in ${gate ? "has-logic cond" : ""}`} title={gate ? `Условие: ${gate}` : "Вход. Двойной щелчок — условие"} onClick={card.type !== "condition" ? () => pinClick("condition") : undefined} onDoubleClick={card.type !== "condition" ? () => openLogic("condition") : undefined} />
+      />}
+      <Handle type="target" position={Position.Left} style={{ top: "50%" }} className={`pin pin-in ${gate ? "has-logic cond" : ""}`} title={gate ? `Условие: ${gate}` : "Вход. Щелчок — условие"} onClick={card.type !== "condition" ? (e) => openLogic("condition", undefined, { x: e.clientX, y: e.clientY }) : undefined} />
       {problem && <span className={`problem-badge ${problem}`} title={problemText}>!{problemCount && problemCount > 1 ? problemCount : ""}</span>}
-      <div className="card-head" title={`id: ${card.id}`}>
+      <div className="card-head" title={`id: ${card.id} · двойной щелчок — настройки`} onDoubleClick={(e) => {
+        e.stopPropagation();
+        const state = useStore.getState();
+        if (!(state.selection.length > 1 && state.selection.includes(card.id))) state.setSelection([card.id]);
+        state.openEditor();
+      }}>
         {isStart && <span className="chip" title="Начало файла"><Flag size={11} /></span>}
-        <span className="card-type">{card.type === "line" ? speaker?.name ?? "без спикера" : TYPE_LABEL[card.type]}</span>
-        {card.flow && card.type !== "flow" && <span className="chip nested-chip" title="Двойной щелчок — открыть вложенный поток"><Layers size={11} /></span>}
+        <span className="card-type">{headLabel}</span>
+        {card.flow && card.type !== "flow" && <span className="chip nested-chip" title="Двойной щелчок по телу — открыть вложенный поток"><Layers size={11} /></span>}
         {card.entry && <span className="chip mono" title={`Точка входа: ${card.entry}`}>▶ {card.entry}</span>}
         {player && card.repeat === "sticky" && <span className="chip" title="Повторяемый вариант (+)"><Repeat size={11} /></span>}
         {player && card.repeat === "fallback" && <span className="chip" title="Запасной вариант">запасной</span>}
         {card.status && card.status !== "draft" && <span className={`status-dot ${card.status}`} title={card.status === "final" ? "Финал" : "На вычитке"} />}
         {card.note && <span className="chip" title={card.note}><StickyNote size={11} /></span>}
+        {card.type === "jump" && action.length > 0 && <span className="chip mono" title={action.join("\n")}>~</span>}
         <Icon size={14} className="card-icon" />
       </div>
-      {card.type === "line" ? <div className={`card-body line-body ${multi ? "" : "nodrag"}`}>
+      {compact ? null : card.type === "line" ? <div className={`card-body line-body ${multi ? "" : "nodrag"}`}>
         <div className="card-top"><Avatar speaker={speaker} /><div className={`card-cell ${player ? "" : "unused"}`} title={player ? undefined : "У реплик NPC текст на кнопке не используется"}><InlineText card={card} field="menuText" locked={multi} autoEdit={player} placeholder={player ? (card.text ? "в выборе будет реплика" : "текст на кнопке…") : "не используется"} /></div></div>
         <div className="card-cell"><InlineText card={card} field="stageDirection" locked={multi} placeholder="ремарка…" /></div>
         <div className={`card-cell grow ${card.text ? "has-text" : ""}`}><InlineText card={card} field="text" locked={multi} autoEdit={!player} placeholder={player ? "(реплика не звучит)" : "текст реплики…"} /></div>
@@ -297,10 +304,10 @@ const CardNode = memo(function CardNode({ id, data, selected, width, height }: N
         {!outPin && action.map((l, i) => <div key={i} className="card-action mono">{l}</div>)}
       </div>}
       {card.type === "condition" ? <>
-        <Handle type="source" id="yes" position={Position.Right} style={{ top: "40%" }} className="pin pin-out pin-yes" title="Выход «да»: щелчок — связи, двойной — действие" onClick={() => pinClick("action", "yes")} onDoubleClick={() => openLogic("action")} />
-        <Handle type="source" id="no" position={Position.Right} style={{ top: "75%" }} className="pin pin-out pin-no" title="Выход «нет»: щелчок — связи, двойной — действие" onClick={() => pinClick("action", "no")} onDoubleClick={() => openLogic("action")} />
+        <Handle type="source" id="yes" position={Position.Right} style={{ top: "40%" }} className="pin pin-out pin-yes" title="Выход «да»: щелчок или наведение — 1–4 карточки, двойной щелчок — действие" onPointerDown={clearPinTimer} onMouseEnter={(e) => branch("yes", { x: e.clientX, y: e.clientY }, 750)} onMouseLeave={clearPinTimer} onClick={(e) => branch("yes", { x: e.clientX, y: e.clientY }, 240)} onDoubleClick={(e) => openLogic("action", "yes", { x: e.clientX, y: e.clientY })} />
+        <Handle type="source" id="no" position={Position.Right} style={{ top: "75%" }} className="pin pin-out pin-no" title="Выход «нет»: щелчок или наведение — 1–4 карточки, двойной щелчок — действие" onPointerDown={clearPinTimer} onMouseEnter={(e) => branch("no", { x: e.clientX, y: e.clientY }, 750)} onMouseLeave={clearPinTimer} onClick={(e) => branch("no", { x: e.clientX, y: e.clientY }, 240)} onDoubleClick={(e) => openLogic("action", "no", { x: e.clientX, y: e.clientY })} />
         <span className="port-label" style={{ top: "calc(40% - 20px)" }}>да</span><span className="port-label" style={{ top: "calc(75% - 20px)" }}>нет</span>
-      </> : outPin ? <Handle type="source" position={Position.Right} style={{ top: "50%" }} className={`pin pin-out ${action.length ? "has-logic act" : ""}`} title={action.length ? `Действие:\n${action.join("\n")}` : "Выход: тяните стрелку; щелчок — 1–4 связи, двойной — действие"} onClick={() => pinClick("action")} onDoubleClick={() => openLogic("action")} /> : null}
+      </> : outPin ? <Handle type="source" position={Position.Right} style={{ top: "50%" }} className={`pin pin-out ${action.length ? "has-logic act" : ""}`} title="Выход: тяните стрелку; щелчок или наведение — 1–4 карточки, двойной щелчок — действие" onPointerDown={clearPinTimer} onMouseEnter={(e) => branch(undefined, { x: e.clientX, y: e.clientY }, 750)} onMouseLeave={clearPinTimer} onClick={(e) => branch(undefined, { x: e.clientX, y: e.clientY }, 240)} onDoubleClick={(e) => openLogic("action", undefined, { x: e.clientX, y: e.clientY })} /> : null}
     </div>
   );
 });
@@ -382,7 +389,8 @@ const nodeTypes = { card: CardNode, note: NoteNode, draft: DraftNode };
 const edgeTypes = { logic: LogicEdge };
 
 type MenuItem = { label: string; color?: string; icon: LucideIcon; type?: CardType | "note"; init?: Partial<Card>; run?: () => void; children?: MenuItem[] };
-type MenuState = { x: number; y: number; at: { x: number; y: number }; from?: string; port?: "yes" | "no" };
+type MenuState = { x: number; y: number; at: { x: number; y: number }; from?: string; port?: "yes" | "no"; count?: number };
+type PinEditorState = { id: string; field: "condition" | "action"; port?: "yes" | "no"; x: number; y: number };
 
 function CreateMenu({ menu, items, onPick, onClose }: { menu: MenuState; items: MenuItem[]; onPick: (item: MenuItem) => void; onClose: () => void }) {
   const [active, setActive] = useState(0);
@@ -407,7 +415,26 @@ function CreateMenu({ menu, items, onPick, onClose }: { menu: MenuState; items: 
   </div>;
 }
 
-function Flow() {
+function PinEditor({ card, field, project, onCommit, onClose }: { card: Card; field: "condition" | "action"; project: Project; onCommit: (value: string) => void; onClose: () => void }) {
+  const [value, setValue] = useState(card[field] ?? "");
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => { ref.current?.querySelector<HTMLElement>("input, textarea")?.focus(); }, []);
+  return <div ref={ref} className="pin-editor" onKeyDown={(e) => {
+    e.stopPropagation();
+    if (e.defaultPrevented) return;
+    if (e.key === "Escape") onClose();
+    else if (e.key === "Enter" && (field === "condition" || e.ctrlKey || e.metaKey)) {
+      e.preventDefault();
+      onCommit(value);
+    }
+  }}>
+    <div className="pin-editor-title">{field === "condition" ? "Условие на входе" : "Действие на выходе"}</div>
+    <CodeInput value={value} onChange={setValue} project={project} multiline={field === "action"} rows={3} placeholder={field === "condition" ? "например: trust > 0" : "по строке, тильда не нужна"} />
+    <div className="pin-editor-actions"><button onClick={onClose}>Отмена</button><button className="primary" onClick={() => onCommit(value)}>ОК</button></div>
+  </div>;
+}
+
+function Flow({ flowKey, viewports }: { flowKey: string; viewports: Map<string, { x: number; y: number; zoom: number }> }) {
   const project = useStore((s) => s.project);
   const key = useStore((s) => s.activeCanvas);
   const flowPath = useStore((s) => s.flowPath);
@@ -418,18 +445,16 @@ function Flow() {
   const snap = usePrefs((s) => s.snap);
   const fontSize = usePrefs((s) => s.cardFontSize);
   const { editCanvas, setSelection, focusCard, requestEdit } = useStore.getState();
-  const { screenToFlowPosition, setCenter, fitView, getViewport, setViewport, getNodes } = useReactFlow();
+  const { screenToFlowPosition, setCenter, fitView, getViewport } = useReactFlow();
   const wrapper = useRef<HTMLDivElement>(null);
-  const [drafts, setDrafts] = useState<DraftLink[]>([]);
-  const [pinPicker, setPinPicker] = useState<{ id: string; port?: "yes" | "no" } | null>(null);
+  const [pinPicker, setPinPicker] = useState<{ id: string; port?: "yes" | "no"; x: number; y: number } | null>(null);
+  const [pinEditor, setPinEditor] = useState<PinEditorState | null>(null);
   const [menu, setMenu] = useState<MenuState | null>(null);
 
   const root = project && key ? project.canvases[key] : null;
   const canvas = root ? canvasAtPath(root, flowPath) ?? null : null;
-  const flowKey = `${key ?? ""}:${flowPath.join("/")}`;
-  const viewports = useRef(new Map<string, { x: number; y: number; zoom: number }>());
-  const previousFlowKey = useRef(flowKey);
-  useEffect(() => { setDrafts([]); setPinPicker(null); setMenu(null); }, [flowKey]);
+  const initialViewport = useRef(viewports.get(flowKey));
+  useEffect(() => () => { viewports.set(flowKey, getViewport()); }, [flowKey, getViewport, viewports]);
 
   const problems = useMemo(() => {
     const map = new Map<string, { severity: "error" | "warning"; text: string[] }>();
@@ -443,12 +468,28 @@ function Flow() {
     return map;
   }, [check, key]);
 
-  const onPin = useCallback((id: string, _field: "condition" | "action", port?: "yes" | "no") => {
-    setDrafts([]);
-    setPinPicker({ id, ...(port ? { port } : {}) });
+  const onPin = useCallback((id: string, field: "condition" | "action", port: "yes" | "no" | undefined, point: PinPoint) => {
+    setPinPicker(null);
+    setMenu(null);
+    setPinEditor({ id, field, ...(port ? { port } : {}), ...point });
   }, []);
+  const onBranch = useCallback((id: string, port: "yes" | "no" | undefined, point: PinPoint) => {
+    setPinEditor(null);
+    setMenu(null);
+    setPinPicker({ id, ...(port ? { port } : {}), ...point });
+  }, []);
+  useEffect(() => {
+    if (!pinPicker && !pinEditor) return;
+    const down = (e: MouseEvent) => {
+      const target = e.target as HTMLElement;
+      if (pinPicker && !target.closest(".pin-count-menu")) setPinPicker(null);
+      if (pinEditor && !target.closest(".pin-editor-wrap") && !target.closest(".popup")) setPinEditor(null);
+    };
+    document.addEventListener("mousedown", down, true);
+    return () => document.removeEventListener("mousedown", down, true);
+  }, [pinPicker, pinEditor]);
 
-  const activeDrafts = useMemo<DraftLink[]>(() => menu?.from ? [...drafts, { id: "draft:menu", from: menu.from, ...(menu.port ? { port: menu.port } : {}), x: menu.at.x, y: menu.at.y }] : drafts, [drafts, menu]);
+  const activeDrafts = useMemo<DraftLink[]>(() => menu?.from ? [{ id: "draft:menu", from: menu.from, ...(menu.port ? { port: menu.port } : {}), x: menu.at.x, y: menu.at.y }] : [], [menu]);
 
   // Выделением владеет React Flow: узлы пересобираются только при правке проекта,
   // а выделение и размеры переносятся со старых узлов.
@@ -456,31 +497,33 @@ function Flow() {
     if (!canvas || !project) return [];
     const cards: Node<CardData>[] = canvas.cards.map((card) => {
       const pr = problems.get(card.id);
+      const compactWidth = COMPACT_W[card.type];
       return {
         id: card.id,
         type: "card",
         position: { x: canvas.layout[card.id]?.x ?? 0, y: canvas.layout[card.id]?.y ?? 0 },
-        width: canvas.layout[card.id]?.w ?? CARD_W,
-        ...(canvas.layout[card.id]?.h != null ? { height: canvas.layout[card.id]!.h } : {}),
+        width: compactWidth ?? canvas.layout[card.id]?.w ?? CARD_W,
+        ...(compactWidth == null && canvas.layout[card.id]?.h != null ? { height: canvas.layout[card.id]!.h } : {}),
         data: {
           card,
           speaker: project.entities.find((e) => e.id === card.speaker),
           player: isPlayerCard(project, card),
           isStart: canvas.start === card.id,
-          fixedHeight: canvas.layout[card.id]?.h != null,
+          fixedHeight: compactWidth == null && canvas.layout[card.id]?.h != null,
           problem: pr?.severity,
           problemText: pr?.text.join("\n"),
           problemCount: pr?.text.length,
           onPin,
+          onBranch,
         },
       };
     });
     const notes: Node<NoteData>[] = canvas.notes.map((n) => ({ id: n.id, type: "note", position: { x: n.x, y: n.y }, data: { id: n.id, text: n.text } }));
     const placeholders: Node[] = activeDrafts.map((draft) => ({ id: draft.id, type: "draft", position: { x: draft.x, y: draft.y }, selectable: false, deletable: false, data: {} }));
     return [...notes, ...cards, ...placeholders];
-  }, [canvas, project, problems, activeDrafts, onPin]);
+  }, [canvas, project, problems, activeDrafts, onPin, onBranch]);
 
-  const [nodes, setNodes, onNodesChange] = useNodesState<Node>([]);
+  const [nodes, setNodes, onNodesChange] = useNodesState<Node>(derivedNodes);
   useEffect(() => {
     const sel = new Set(useStore.getState().selection);
     setNodes((prev) => {
@@ -515,7 +558,7 @@ function Flow() {
     return [...real, ...temporary];
   }, [canvas, badLinks, activeDrafts]);
 
-  const [edges, setEdges, onEdgesChange] = useEdgesState<Edge<EdgeData>>([]);
+  const [edges, setEdges, onEdgesChange] = useEdgesState<Edge<EdgeData>>(derivedEdges);
   useEffect(() => {
     const links = new Set(useStore.getState().selectedLinks);
     setEdges((prev) => {
@@ -532,18 +575,6 @@ function Flow() {
       prev.some((e) => !!e.selected !== links.has(e.id)) ? prev.map((e) => (!!e.selected !== links.has(e.id) ? { ...e, selected: links.has(e.id) } : e)) : prev,
     );
   }, [selectedLinks, setEdges]);
-
-  useEffect(() => {
-    const previous = previousFlowKey.current;
-    if (previous !== flowKey) viewports.current.set(previous, getViewport());
-    previousFlowKey.current = flowKey;
-    const saved = viewports.current.get(flowKey);
-    const t = setTimeout(() => {
-      if (saved) void setViewport(saved);
-      else void fitView({ padding: 0.2, maxZoom: 1 });
-    }, 50);
-    return () => clearTimeout(t);
-  }, [flowKey, fitView, getViewport, setViewport]);
 
   useEffect(() => {
     if (!focus || focus.canvas !== key) return;
@@ -567,17 +598,6 @@ function Flow() {
     [setSelection],
   );
 
-  const onEdgeClick = useCallback((event: React.MouseEvent, edge: Edge) => {
-    if (edge.id.startsWith("draft-edge:")) return;
-    const additive = event.shiftKey || event.metaKey || event.ctrlKey;
-    const previous = additive ? useStore.getState().selectedLinks : [];
-    const links = (previous.includes(edge.id) ? previous.filter((id) => id !== edge.id) : [...previous, edge.id]).sort();
-    const pickedNodes = additive ? getNodes().filter((n) => n.selected && n.type !== "draft").map((n) => n.id).sort() : [];
-    if (!additive) setNodes((ns) => ns.map((n) => n.selected ? { ...n, selected: false } : n));
-    setEdges((es) => es.map((e) => !!e.selected !== links.includes(e.id) ? { ...e, selected: links.includes(e.id) } : e));
-    setSelection(pickedNodes, !pickedNodes.length && links.length === 1 ? links[0] : null, links);
-  }, [getNodes, setEdges, setNodes, setSelection]);
-
   const onConnect = useCallback(
     (c: Connection) => {
       if (c.target.startsWith("draft:")) return;
@@ -587,15 +607,18 @@ function Flow() {
   );
 
   const openMenu = useCallback(
-    (clientX: number, clientY: number, from?: string, port?: "yes" | "no") => {
+    (clientX: number, clientY: number, from?: string, port?: "yes" | "no", count = 1) => {
       const rect = wrapper.current?.getBoundingClientRect();
       const at = screenToFlowPosition({ x: clientX, y: clientY - 30 });
+      setPinPicker(null);
+      setPinEditor(null);
       setMenu({
         x: Math.min(clientX - (rect?.left ?? 0), (rect?.width ?? 1e4) - 230),
         y: Math.min(clientY - (rect?.top ?? 0), (rect?.height ?? 1e4) - 300),
         at: snapPoint(at, usePrefs.getState().snap ? GRID : 1),
         from,
         port,
+        count,
       });
     },
     [screenToFlowPosition],
@@ -606,6 +629,9 @@ function Flow() {
   const onConnectStart: OnConnectStart = useCallback((event) => {
     const point = "changedTouches" in event ? event.changedTouches[0] : event;
     connectFrom.current = { x: point.clientX, y: point.clientY };
+    setPinPicker(null);
+    setPinEditor(null);
+    setMenu(null);
   }, []);
   const onConnectEnd: OnConnectEnd = useCallback(
     (event, state) => {
@@ -654,19 +680,21 @@ function Flow() {
       if (!menu) return;
       setMenu(null);
       if (item.run) return item.run();
-      let newId = "";
+      let newIds: string[] = [];
       editCanvas((canvas) => {
         if (item.type === "note") {
-          newId = addNote(canvas, menu.at, root ?? canvas).id;
+          newIds = [addNote(canvas, menu.at, root ?? canvas).id];
           return;
         }
-        const card = addCard(canvas, item.type ?? "line", menu.at, item.init, root ?? canvas);
-        if (menu.from) connect(canvas, menu.from, card.id, menu.port);
-        newId = card.id;
+        if (menu.from) {
+          newIds = addBranchCards(canvas, menu.from, item.type ?? "line", menu.count ?? 1, item.init ?? {}, root ?? canvas, usePrefs.getState().snap ? GRID : 1, menu.port).map((card) => card.id);
+          return;
+        }
+        newIds = [addCard(canvas, item.type ?? "line", menu.at, item.init, root ?? canvas).id];
       });
-      if (newId) {
-        setSelection([newId]);
-        requestEdit(newId);
+      if (newIds.length) {
+        setSelection([...newIds].sort());
+        if (newIds.length === 1 && item.type !== "note") requestEdit(newIds[0]);
       }
       wrapper.current?.focus();
     },
@@ -708,20 +736,45 @@ function Flow() {
 
   const onNodesDelete = useCallback((deleted: Node[]) => editCanvas((c) => deleteCards(c, deleted.filter((n) => n.type !== "draft").map((n) => n.id))), [editCanvas]);
   const onEdgesDelete = useCallback(
-    (deleted: Edge[]) => editCanvas((c) => deleted.filter((e) => !(e.data as EdgeData | undefined)?.draft).forEach((e) => deleteLink(c, e.source, e.target, e.sourceHandle ?? undefined))),
-    [editCanvas],
+    (deleted: Edge[]) => {
+      const ids = new Set(useStore.getState().selectedLinks);
+      for (const edge of deleted) if (!(edge.data as EdgeData | undefined)?.draft) ids.add(edge.id);
+      if (!ids.size) return;
+      editCanvas((c) => {
+        for (const link of [...c.links]) {
+          const id = `${link.from}>${link.to}>${link.port ?? ""}`;
+          if (ids.has(id)) deleteLink(c, link.from, link.to, link.port);
+        }
+      });
+      setSelection([], null, []);
+    },
+    [editCanvas, setSelection],
   );
+
+  useEffect(() => {
+    const onDelete = (e: KeyboardEvent) => {
+      if ((e.key !== "Delete" && e.key !== "Backspace") || useStore.getState().view !== "canvas" || isTyping()) return;
+      const { selectedLinks, selection } = useStore.getState();
+      if (!selectedLinks.length) return;
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      const ids = new Set(selectedLinks);
+      editCanvas((c) => {
+        if (selection.length) deleteCards(c, selection);
+        for (const link of [...c.links]) {
+          const id = `${link.from}>${link.to}>${link.port ?? ""}`;
+          if (ids.has(id)) deleteLink(c, link.from, link.to, link.port);
+        }
+      });
+      setSelection([], null, []);
+    };
+    window.addEventListener("keydown", onDelete, true);
+    return () => window.removeEventListener("keydown", onDelete, true);
+  }, [editCanvas, setSelection]);
 
   const onNodeClick = useCallback(
     (e: React.MouseEvent, node: Node) => {
       if (node.type !== "card") return;
-      if (drafts.length && !(e.ctrlKey || e.metaKey)) {
-        const draft = drafts[0];
-        editCanvas((c) => connect(c, draft.from, node.id, draft.port));
-        setDrafts((old) => old.slice(1));
-        if (drafts.length === 1) setPinPicker(null);
-        return;
-      }
       if (!(e.ctrlKey || e.metaKey)) return;
       const card = (node.data as CardData).card;
       if (card.type !== "jump" || !card.target || !project) return;
@@ -732,7 +785,7 @@ function Flow() {
       const targetCard = flowCards(target).map((x) => x.card).find((c) => c.id === sub || (c.entry && (c.entry === sub || `entry_${c.entry}` === sub))) ?? rootCard(target);
       focusCard(targetKey, targetCard?.id);
     },
-    [project, focusCard, drafts, editCanvas],
+    [project, focusCard],
   );
 
   const createAt = useCallback(
@@ -773,18 +826,15 @@ function Flow() {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (useStore.getState().view !== "canvas" || isTyping()) return;
-      if (e.key === "Escape" && (drafts.length || pinPicker)) {
+      if (e.key === "Escape" && (pinPicker || pinEditor)) {
         e.preventDefault();
-        setDrafts([]);
         setPinPicker(null);
+        setPinEditor(null);
         return;
       }
-      if (pinPicker && !e.ctrlKey && !e.metaKey && /^[1-4]$/.test(e.key) && canvas) {
+      if (pinPicker && !e.ctrlKey && !e.metaKey && /^[1-4]$/.test(e.key)) {
         e.preventDefault();
-        const count = Number(e.key);
-        const at = canvas.layout[pinPicker.id] ?? { x: 0, y: 0 };
-        const stamp = Date.now();
-        setDrafts(Array.from({ length: count }, (_, i) => ({ id: `draft:${pinPicker.id}:${stamp}:${i}`, from: pinPicker.id, ...(pinPicker.port ? { port: pinPicker.port } : {}), x: at.x + (at.w ?? CARD_W) + 150, y: at.y + 45 + (i - (count - 1) / 2) * 80 })));
+        openMenu(pinPicker.x + 20, pinPicker.y, pinPicker.id, pinPicker.port, Number(e.key));
         return;
       }
       if (e.shiftKey && e.code === "Digit1") {
@@ -819,7 +869,7 @@ function Flow() {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [editCanvas, setSelection, setCenter, requestEdit, fitView, pinPicker, drafts.length, canvas]);
+  }, [editCanvas, setSelection, setCenter, requestEdit, fitView, pinPicker, pinEditor, openMenu]);
 
   // Ctrl+C / Ctrl+X / Ctrl+V: карточки и заметки со стрелками между ними — через системный буфер,
   // поэтому можно вставлять в другой файл и даже в другое окно. В полях ввода — обычный текст.
@@ -874,6 +924,10 @@ function Flow() {
       <ReactFlow
         nodes={nodes}
         edges={edges}
+        defaultViewport={initialViewport.current ?? { x: 0, y: 0, zoom: 1 }}
+        fitView={!initialViewport.current}
+        fitViewOptions={{ padding: 0.2, maxZoom: 1 }}
+        onMoveEnd={() => viewports.set(flowKey, getViewport())}
         nodeTypes={nodeTypes}
         edgeTypes={edgeTypes}
         onNodesChange={onNodesChange}
@@ -883,7 +937,6 @@ function Flow() {
         selectionMode={SelectionMode.Partial}
         onNodeContextMenu={onNodeContextMenu}
         onSelectionChange={onSelectionChange}
-        onEdgeClick={onEdgeClick}
         onConnect={onConnect}
         onConnectStart={onConnectStart}
         onConnectEnd={onConnectEnd}
@@ -894,16 +947,14 @@ function Flow() {
         onNodeDoubleClick={(_, node) => {
           if (node.type !== "card" || !key) return;
           const card = (node.data as CardData).card;
-          setSelection([card.id]);
           if (card.flow) useStore.getState().setActiveCanvas(key, [...flowPath, card.id]);
-          else useStore.getState().openEditor();
         }}
         onPaneContextMenu={onPaneContextMenu}
         onPaneClick={() => {
           setMenu(null);
           setCardMenu(null);
-          setDrafts([]);
           setPinPicker(null);
+          setPinEditor(null);
           useStore.getState().clearInspector();
         }}
         proOptions={{ hideAttribution: true }}
@@ -934,19 +985,32 @@ function Flow() {
           <span className="toolbar-sep" />
           <IconButton icon={Magnet} className={`toggle ${snap ? "on" : ""}`} label={snap ? "Привязка к сетке" : "Свободное перемещение"} onClick={() => usePrefs.getState().set({ snap: !snap })} />
         </Panel>
-        {pinPicker && <Panel position="top-right" className="pin-picker">
-          <span>Связи из пина:</span>{[1, 2, 3, 4].map((count) => <button key={count} onClick={() => {
-            if (!canvas) return;
-            const at = canvas.layout[pinPicker.id] ?? { x: 0, y: 0 };
-            const stamp = Date.now();
-            setDrafts(Array.from({ length: count }, (_, i) => ({ id: `draft:${pinPicker.id}:${stamp}:${i}`, from: pinPicker.id, ...(pinPicker.port ? { port: pinPicker.port } : {}), x: at.x + (at.w ?? CARD_W) + 150, y: at.y + 45 + (i - (count - 1) / 2) * 80 })));
-          }}>{count}</button>)}
-          <IconButton icon={X} label="Отмена" onClick={() => { setDrafts([]); setPinPicker(null); }} />
-          {drafts.length > 0 && <span className="muted">Щёлкните по цели · осталось: {drafts.length}</span>}
-        </Panel>}
       </ReactFlow>
+      {pinPicker && <div className="create-menu pin-count-menu" style={{
+        left: Math.max(8, Math.min(pinPicker.x - (wrapper.current?.getBoundingClientRect().left ?? 0) + 12, (wrapper.current?.clientWidth ?? 400) - 70)),
+        top: Math.max(8, Math.min(pinPicker.y - (wrapper.current?.getBoundingClientRect().top ?? 0), (wrapper.current?.clientHeight ?? 400) - 170)),
+      }} onContextMenu={(e) => e.preventDefault()}>
+        <div className="pin-count-title">Новых связей</div>
+        {[1, 2, 3, 4].map((count) => <button key={count} onMouseDown={(e) => e.preventDefault()} onMouseEnter={(e) => openMenu(e.clientX + 12, e.clientY - 12, pinPicker.id, pinPicker.port, count)} onClick={(e) => openMenu(e.clientX + 12, e.clientY - 12, pinPicker.id, pinPicker.port, count)}>{count}<ChevronRight size={14} className="submenu-arrow" /></button>)}
+      </div>}
+      {pinEditor && project && canvas.cards.some((card) => card.id === pinEditor.id) && <div className="pin-editor-wrap" style={{
+        left: Math.max(8, Math.min(pinEditor.x - (wrapper.current?.getBoundingClientRect().left ?? 0) + 12, (wrapper.current?.clientWidth ?? 400) - 308)),
+        top: Math.max(8, Math.min(pinEditor.y - (wrapper.current?.getBoundingClientRect().top ?? 0) + 12, (wrapper.current?.clientHeight ?? 400) - 190)),
+      }} onMouseDown={(e) => e.stopPropagation()}><PinEditor card={canvas.cards.find((card) => card.id === pinEditor.id)!} field={pinEditor.field} project={project} onClose={() => setPinEditor(null)} onCommit={(value) => {
+        editCanvas((c) => {
+          const target = c.cards.find((card) => card.id === pinEditor.id);
+          if (!target) return;
+          if (value.trim()) target[pinEditor.field] = value;
+          else delete target[pinEditor.field];
+        });
+        setPinEditor(null);
+      }} /></div>}
       {cardMenu && canvas && <CreateMenu key={`card:${cardMenu.id}`} menu={{ x: cardMenu.x, y: cardMenu.y, at: { x: 0, y: 0 } }} items={[
-        { label: "Настройки карточки", icon: GitBranch, run: () => { setSelection([cardMenu.id]); useStore.getState().openEditor(); } },
+        { label: "Настройки карточки", icon: GitBranch, run: () => {
+          const state = useStore.getState();
+          if (!(state.selection.length > 1 && state.selection.includes(cardMenu.id))) setSelection([cardMenu.id]);
+          state.openEditor();
+        } },
         ...(canvas.cards.find((c) => c.id === cardMenu.id)?.flow ? [{ label: "Открыть вложенность", icon: Layers, run: () => {
           if (key) useStore.getState().setActiveCanvas(key, [...flowPath, cardMenu.id]);
         } }] : []),
@@ -960,9 +1024,13 @@ function Flow() {
 }
 
 export function CanvasView() {
+  const key = useStore((s) => s.activeCanvas);
+  const flowPath = useStore((s) => s.flowPath);
+  const flowKey = `${key ?? ""}:${flowPath.join("/")}`;
+  const viewports = useRef(new Map<string, { x: number; y: number; zoom: number }>());
   return (
-    <ReactFlowProvider>
-      <Flow />
+    <ReactFlowProvider key={flowKey}>
+      <Flow flowKey={flowKey} viewports={viewports.current} />
     </ReactFlowProvider>
   );
 }

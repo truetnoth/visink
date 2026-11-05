@@ -22,7 +22,7 @@ import {
 import type { LucideIcon } from "lucide-react";
 import { ArrowRightFromLine, ChevronRight, Code, Flag, GitBranch, Layers, LayoutGrid, Magnet, Maximize, MessageSquare, Repeat, StickyNote, Trash2, User } from "lucide-react";
 import type { Card, CardType, Entity, Project } from "@visink/core";
-import { canvasAtPath, flowCards, isPlayerCard } from "@visink/core";
+import { canvasAtPath, flowCards, isPlayerCard, linkId } from "@visink/core";
 import { rootCard } from "@visink/compiler";
 import { useStore } from "./store";
 import {
@@ -543,14 +543,14 @@ function Flow({ flowKey, viewports }: { flowKey: string; viewports: Map<string, 
 
   const badLinks = useMemo(() => {
     const out = new Set<string>();
-    for (const d of check?.diagnostics ?? []) if (d.canvas === key && d.link) out.add(`${d.link.from}>${d.link.to}>${d.link.port ?? ""}`);
+    for (const d of check?.diagnostics ?? []) if (d.canvas === key && d.link) out.add(linkId(d.link));
     return out;
   }, [check, key]);
 
   const derivedEdges = useMemo<Edge<EdgeData>[]>(() => {
     if (!canvas) return [];
     const real = canvas.links.map((l): Edge<EdgeData> => {
-      const id = `${l.from}>${l.to}>${l.port ?? ""}`;
+      const id = linkId(l);
       const error = badLinks.has(id);
       return { id, type: "logic", source: l.from, target: l.to, sourceHandle: l.port ?? null, markerEnd: { type: MarkerType.ArrowClosed }, className: [l.port ? `edge-${l.port}` : "", error ? "edge-error" : ""].join(" ").trim() || undefined, data: { condition: l.condition, action: l.action, error } };
     });
@@ -742,7 +742,7 @@ function Flow({ flowKey, viewports }: { flowKey: string; viewports: Map<string, 
       if (!ids.size) return;
       editCanvas((c) => {
         for (const link of [...c.links]) {
-          const id = `${link.from}>${link.to}>${link.port ?? ""}`;
+          const id = linkId(link);
           if (ids.has(id)) deleteLink(c, link.from, link.to, link.port);
         }
       });
@@ -762,7 +762,7 @@ function Flow({ flowKey, viewports }: { flowKey: string; viewports: Map<string, 
       editCanvas((c) => {
         if (selection.length) deleteCards(c, selection);
         for (const link of [...c.links]) {
-          const id = `${link.from}>${link.to}>${link.port ?? ""}`;
+          const id = linkId(link);
           if (ids.has(id)) deleteLink(c, link.from, link.to, link.port);
         }
       });

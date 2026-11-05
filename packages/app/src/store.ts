@@ -1,7 +1,7 @@
 import { create } from "zustand";
 import { temporal } from "zundo";
 import type { Canvas, FlowPath, Project, ProjectFs } from "@visink/core";
-import { canvasAtPath, createProject, flowCards, loadProject, saveProject, writeBuild } from "@visink/core";
+import { canvasAtPath, createProject, flowCards, linkId, loadProject, saveProject, writeBuild } from "@visink/core";
 import type { CheckResult } from "@visink/checker";
 import { checkProject } from "@visink/checker";
 import { BrowserFs, pickDirectory } from "./browserFs";
@@ -163,7 +163,7 @@ export const useStore = create<State>()(
       focusLink: (canvas, link) => {
         const root = get().project?.canvases[canvas];
         const flowPath = root ? flowCards(root).find((x) => x.card.id === link.from)?.path ?? [] : [];
-        const id = `${link.from}>${link.to}>${link.port ?? ""}`;
+        const id = linkId(link);
         set({
           activeCanvas: canvas,
           flowPath,

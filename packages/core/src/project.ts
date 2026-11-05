@@ -298,3 +298,6 @@ export async function writeBuild(fs: ProjectFs, dir: string, files: Map<string, 
   }
   return written;
 }
+
+/** Id стрелки на холсте и в выделении: "from>to>port". */
+export const linkId = (l: { from: string; to: string; port?: string }) => `${l.from}>${l.to}>${l.port ?? ""}`;

@@ -6,7 +6,7 @@ import type { Option } from "./ui";
 import { CodeInput, Combobox, IconButton, Select as UiSelect } from "./ui";
 import type { Hit } from "./search";
 import { HIT_GROUPS, searchProject } from "./search";
-import { canvasAtPath, flowCards, isPlayerCard, isValidInkName } from "@visink/core";
+import { canvasAtPath, flowCards, isPlayerCard, isValidInkName, linkId } from "@visink/core";
 import { unknownIdentifiers } from "@visink/checker";
 import { useStore } from "./store";
 import { askUser } from "./tauriFs";
@@ -822,7 +822,7 @@ export function Properties() {
   const flowPath = useStore((s) => s.flowPath);
   const root = key ? project.canvases[key] : undefined;
   const canvas = root ? canvasAtPath(root, flowPath) : undefined;
-  const link = canvas && selectedLink ? canvas.links.find((l) => `${l.from}>${l.to}>${l.port ?? ""}` === selectedLink) : undefined;
+  const link = canvas && selectedLink ? canvas.links.find((l) => linkId(l) === selectedLink) : undefined;
   const card = canvas && selection.length === 1 ? canvas.cards.find((c) => c.id === selection[0]) : undefined;
   const entity = selectedEntity ? project.entities.find((e) => e.id === selectedEntity) : undefined;
 
@@ -1021,7 +1021,7 @@ function CardProps({ card, canvas, canvasKey, project }: { card: Card; canvas: C
 function LinkProps({ link, canvas, canvasKey, project }: { link: Link; canvas: Canvas; canvasKey: string; project: Project }) {
   const check = useStore((s) => s.check);
   const { editCanvas, setSelection } = useStore.getState();
-  const same = (l: Link) => l.from === link.from && l.to === link.to && (l.port ?? "") === (link.port ?? "");
+  const same = (l: { from: string; to: string; port?: string }) => linkId(l) === linkId(link);
   const set = (field: "condition" | "action", value: string) =>
     editCanvas((c) => {
       const target = c.links.find(same);

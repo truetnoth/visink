@@ -1,9 +1,16 @@
 import { describe, expect, it } from "vitest";
 import { checkProject } from "@visink/checker";
-import { createCard } from "@visink/core";
+import { createCard, linkId } from "@visink/core";
 import { demoProject } from "../../checker/test/fixtures";
 import { addBranchCards, addCanvas, addNestedFlow, alignToGrid, connect, copyFragment, deleteCards, jumpTargets, parseFragment, pasteFragment, renameVariable, replaceIdent, snapPoint, variableUsages } from "../src/ops";
 import { searchProject } from "../src/search";
+
+describe("linkId", () => {
+  it("id стрелки: from>to>port, без порта — пустой хвост", () => {
+    expect(linkId({ from: "a", to: "b" })).toBe("a>b>");
+    expect(linkId({ from: "a", to: "b", port: "yes" })).toBe("a>b>yes");
+  });
+});
 
 describe("связи условия", () => {
   it("один порт хранит несколько целей и отбрасывает только точный дубликат", () => {

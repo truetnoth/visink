@@ -37,7 +37,7 @@ import {
   copyFragment,
   defaultNpc,
   deleteCards,
-  deleteLink,
+  deleteLinks,
   nextSpeaker,
   parseFragment,
   pasteFragment,
@@ -729,42 +729,21 @@ function Flow({ flowKey, viewports }: { flowKey: string; viewports: Map<string, 
     [editCanvas],
   );
 
-  const onNodesDelete = useCallback((deleted: Node[]) => editCanvas((c) => deleteCards(c, deleted.filter((n) => n.type !== "draft").map((n) => n.id))), [editCanvas]);
-  const onEdgesDelete = useCallback(
-    (deleted: Edge[]) => {
-      const ids = new Set(useStore.getState().selectedLinks);
-      for (const edge of deleted) if (!(edge.data as EdgeData | undefined)?.draft) ids.add(edge.id);
-      if (!ids.size) return;
-      editCanvas((c) => {
-        for (const link of [...c.links]) {
-          const id = linkId(link);
-          if (ids.has(id)) deleteLink(c, link.from, link.to, link.port);
-        }
-      });
-      setSelection([], null, []);
-    },
-    [editCanvas, setSelection],
-  );
-
   useEffect(() => {
     const onDelete = (e: KeyboardEvent) => {
-      if ((e.key !== "Delete" && e.key !== "Backspace") || useStore.getState().view !== "canvas" || isTyping()) return;
-      const { selectedLinks, selection } = useStore.getState();
-      if (!selectedLinks.length) return;
+      if (e.key !== "Delete" && e.key !== "Backspace") return;
+      const { view, editorOpen, selection, selectedLinks } = useStore.getState();
+      if (view !== "canvas" || editorOpen || isTyping() || document.querySelector(".modal-backdrop")) return;
+      if (!selection.length && !selectedLinks.length) return;
       e.preventDefault();
-      e.stopImmediatePropagation();
-      const ids = new Set(selectedLinks);
       editCanvas((c) => {
         if (selection.length) deleteCards(c, selection);
-        for (const link of [...c.links]) {
-          const id = linkId(link);
-          if (ids.has(id)) deleteLink(c, link.from, link.to, link.port);
-        }
+        if (selectedLinks.length) deleteLinks(c, selectedLinks);
       });
       setSelection([], null, []);
     };
-    window.addEventListener("keydown", onDelete, true);
-    return () => window.removeEventListener("keydown", onDelete, true);
+    window.addEventListener("keydown", onDelete);
+    return () => window.removeEventListener("keydown", onDelete);
   }, [editCanvas, setSelection]);
 
   const onNodeClick = useCallback(
@@ -936,8 +915,6 @@ function Flow({ flowKey, viewports }: { flowKey: string; viewports: Map<string, 
         onConnectStart={onConnectStart}
         onConnectEnd={onConnectEnd}
         onNodeDragStop={onNodeDragStop}
-        onNodesDelete={onNodesDelete}
-        onEdgesDelete={onEdgesDelete}
         onNodeClick={onNodeClick}
         onNodeDoubleClick={(_, node) => {
           if (node.type !== "card" || !key) return;
@@ -956,7 +933,7 @@ function Flow({ flowKey, viewports }: { flowKey: string; viewports: Map<string, 
         zoomOnDoubleClick={false}
         snapToGrid={snap}
         snapGrid={[GRID, GRID]}
-        deleteKeyCode={["Delete", "Backspace"]}
+        deleteKeyCode={null}
         selectionOnDrag
         panOnDrag={[1]}
         panActivationKeyCode={["Meta", "Control"]}

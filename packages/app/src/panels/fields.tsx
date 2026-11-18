@@ -64,7 +64,7 @@ export function Select<T extends string>({ value, options, onChange }: { value: 
 export function characterOptions(project: Project, empty = "— без спикера —"): Option[] {
   return [
     { value: "", label: empty },
-    ...project.entities.filter((e) => e.kind === "character").map((e) => ({ value: e.id, label: e.name, color: e.color, hint: e.isPlayer ? "игрок" : undefined })),
+    ...project.entities.map((e) => ({ value: e.id, label: e.name, color: e.color, hint: e.isPlayer ? "игрок" : undefined })),
   ];
 }
 
@@ -77,6 +77,7 @@ export function ExprField({
   multiline,
   rows,
   extra,
+  owner,
   hint,
   noCheck,
 }: {
@@ -88,14 +89,15 @@ export function ExprField({
   rows?: number;
   /** локальные имена — параметры функции */
   extra?: string[];
+  owner?: string;
   hint?: string;
   /** не проверять имена — в чистом ink есть обычный текст */
   noCheck?: boolean;
 }) {
-  const unknown = value && !noCheck ? unknownIdentifiers(value, project, extra) : [];
+  const unknown = value && !noCheck ? unknownIdentifiers(value, project, extra, owner) : [];
   return (
     <Field label={label} hint={unknown.length > 0 ? <span className="bad">Неизвестно: {unknown.join(", ")}</span> : hint}>
-      <CodeInput value={value} onChange={onChange} project={project} multiline={multiline} rows={rows} extra={extra} />
+      <CodeInput value={value} onChange={onChange} project={project} multiline={multiline} rows={rows} extra={extra} owner={owner} />
     </Field>
   );
 }

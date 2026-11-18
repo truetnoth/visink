@@ -1,5 +1,5 @@
 import type { Canvas, Card, Link, Project, Variable } from "@visink/core";
-import { flowCards, guessStart, isPlayerCard, isValidInkName, stableStringify } from "@visink/core";
+import { namespaceName, qualifiedName, namespaceError, flowCards, guessStart, isPlayerCard, isValidInkName, stableStringify } from "@visink/core";
 import { escapeInkText, escapeTagValue } from "./escape";
 
 export { escapeInkText, escapeTagValue } from "./escape";
@@ -109,7 +109,7 @@ export function stitchName(card: Card): string {
   return card.id;
 }
 
-export const scopedInkName = (owner: string | undefined, name: string) => owner ? `${owner}__${name}` : name;
+export const scopedInkName = (owner: string | undefined, name: string, project?: Project) => owner ? `${project ? namespaceName(project, owner) : owner}__${name}` : name;
 
 function replaceLogicToken(text: string, from: string, to: string): string {
   const escaped = from.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -121,10 +121,10 @@ function replaceLogicToken(text: string, from: string, to: string): string {
 export function compileLogic(project: Project, text: string, owner?: string, params: string[] = []): string {
   const owned = [...project.variables.vars, ...project.variables.lists, ...project.variables.functions].filter((x) => x.owner);
   let out = text;
-  for (const item of owned) out = replaceLogicToken(out, `${item.owner}.${item.name}`, scopedInkName(item.owner, item.name));
+  for (const item of owned) out = replaceLogicToken(out, qualifiedName(project, item), scopedInkName(item.owner, item.name, project));
   if (owner) {
     for (const item of owned.filter((x) => x.owner === owner && !params.includes(x.name))) {
-      out = replaceLogicToken(out, item.name, scopedInkName(owner, item.name));
+      out = replaceLogicToken(out, item.name, scopedInkName(owner, item.name, project));
     }
   }
   return out;
@@ -462,9 +462,13 @@ function varLiteral(v: Variable): string {
 export function compileGlobals(project: Project, diagnostics: Diagnostic[] = []): { text: string; lineMap: (LineRef | null)[] } {
   const out = new Emitter();
   out.push(HEADER);
+  for (const scope of [...project.entities.map((e) => ({ id: e.id, name: e.technicalName ?? e.id })), ...(project.variables.sets ?? [])]) {
+    const error = namespaceError(project, scope.name, scope.id);
+    if (error) diagnostics.push({ severity: "error", code: "bad-namespace", message: `${scope.name}: ${error}` });
+  }
   const seen = new Set<string>();
   const check = (sourceName: string, owner?: string, func?: string) => {
-    const name = scopedInkName(owner, sourceName);
+    const name = scopedInkName(owner, sourceName, project);
     const ref = { ...(func ? { func } : {}), ...(owner ? { funcOwner: owner } : {}) };
     if (!isValidInkName(name)) {
       diagnostics.push({ severity: "error", code: "bad-var-name", message: `Имя «${sourceName}»: только латиница, цифры и _`, ...ref });
@@ -474,12 +478,12 @@ export function compileGlobals(project: Project, diagnostics: Diagnostic[] = [])
   };
   for (const v of project.variables.vars) {
     check(v.name, v.owner);
-    out.push(`VAR ${scopedInkName(v.owner, v.name)} = ${varLiteral(v)}`);
+    out.push(`VAR ${scopedInkName(v.owner, v.name, project)} = ${varLiteral(v)}`);
   }
   for (const l of project.variables.lists) {
     check(l.name, l.owner);
     const items = l.items.map((i) => (l.initial.includes(i) ? `(${i})` : i));
-    out.push(`LIST ${scopedInkName(l.owner, l.name)} = ${items.join(", ")}`);
+    out.push(`LIST ${scopedInkName(l.owner, l.name, project)} = ${items.join(", ")}`);
   }
   const functions = project.variables.functions ?? [];
   for (const f of functions) {
@@ -488,11 +492,11 @@ export function compileGlobals(project: Project, diagnostics: Diagnostic[] = [])
       if (!isValidInkName(p)) diagnostics.push({ severity: "error", code: "bad-param", message: `Параметр «${p}»: только латиница, цифры и _`, func: f.name, funcOwner: f.owner });
     }
   }
-  for (const f of functions.filter((x) => x.external)) out.push(`EXTERNAL ${scopedInkName(f.owner, f.name)}(${f.params.join(", ")})`, { func: f.name, funcOwner: f.owner });
+  for (const f of functions.filter((x) => x.external)) out.push(`EXTERNAL ${scopedInkName(f.owner, f.name, project)}(${f.params.join(", ")})`, { func: f.name, funcOwner: f.owner });
   for (const f of functions) {
     const ref = { func: f.name, funcOwner: f.owner };
     out.push("");
-    out.push(`=== function ${scopedInkName(f.owner, f.name)}(${f.params.join(", ")}) ===`, ref);
+    out.push(`=== function ${scopedInkName(f.owner, f.name, project)}(${f.params.join(", ")}) ===`, ref);
     const body = compileLogic(project, f.body.replace(/\s+$/, ""), f.owner, f.params);
     for (const line of body ? body.split("\n") : ["~ return"]) out.push(line, ref);
   }
@@ -554,9 +558,9 @@ export function buildProject(project: Project): BuildResult {
     }),
     externals: (project.variables.functions ?? [])
       .filter((f) => f.external)
-      .map((f) => ({ name: scopedInkName(f.owner, f.name), params: f.params, ...(f.description ? { description: f.description } : {}), ...(f.owner ? { owner: f.owner, sourceName: f.name } : {}) })),
+      .map((f) => ({ name: scopedInkName(f.owner, f.name, project), params: f.params, ...(f.description ? { description: f.description } : {}), ...(f.owner ? { owner: f.owner, sourceName: f.name } : {}) })),
     characters: project.entities
-      .filter((e) => e.kind === "character")
+
       .map((e) => ({ id: e.id, name: e.name, inkName: e.inkName, color: e.color, portrait: e.portrait, isPlayer: e.isPlayer })),
     lines: {},
   };

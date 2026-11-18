@@ -8,15 +8,17 @@ describe("store", () => {
     useStore.getState().setActiveCanvas("advisor");
   });
 
-  it("openCardSettings: одиночная карточка выделяется, группа сохраняется", () => {
-    useStore.getState().openCardSettings("a3");
+  it("редактор карточки сохраняет групповое выделение, не открывая модалку", () => {
+    useStore.getState().openCardControl("a3", "speaker");
     expect(useStore.getState().selection).toEqual(["a3"]);
-    expect(useStore.getState().editorOpen).toBe(true);
-    useStore.getState().closeEditor();
+    expect(useStore.getState().editorOpen).toBe(false);
+    expect(useStore.getState().cardControl?.field).toBe("speaker");
     useStore.getState().setSelection(["a3", "a4"]);
-    useStore.getState().openCardSettings("a4");
+    useStore.getState().openCardControl("a4", "repeat");
     expect(useStore.getState().selection).toEqual(["a3", "a4"]);
-    expect(useStore.getState().editorOpen).toBe(true);
+    expect(useStore.getState().cardControl?.field).toBe("repeat");
+    useStore.getState().openEditor();
+    expect(useStore.getState().editorOpen).toBe(false);
   });
 
   it("правка одной карточки не пересоздаёт остальные объекты проекта", () => {

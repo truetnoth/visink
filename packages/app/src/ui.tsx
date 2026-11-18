@@ -1,3 +1,4 @@
+import { draggedItems, variableDrop } from "./treeDrag";
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import type { LucideIcon } from "lucide-react";
@@ -361,7 +362,12 @@ export function CodeInput({
   multiline,
   rows = 2,
   extra,
+  owner,
   placeholder,
+  inputRef,
+  className = "",
+  onBlur,
+  onUnhandledKeyDown,
 }: {
   value: string;
   onChange: (v: string) => void;
@@ -370,13 +376,19 @@ export function CodeInput({
   rows?: number;
   /** локальные имена — параметры функции */
   extra?: string[];
+  owner?: string;
   placeholder?: string;
+  inputRef?: React.RefObject<HTMLTextAreaElement & HTMLInputElement>;
+  className?: string;
+  onBlur?: (e: React.FocusEvent<HTMLTextAreaElement & HTMLInputElement>) => void;
+  onUnhandledKeyDown?: (e: React.KeyboardEvent<HTMLTextAreaElement & HTMLInputElement>) => void;
 }) {
-  const ref = useRef<HTMLTextAreaElement & HTMLInputElement>(null);
+  const ownRef = useRef<HTMLTextAreaElement & HTMLInputElement>(null);
+  const ref = inputRef ?? ownRef;
   const [result, setResult] = useState<SuggestResult | null>(null);
   const [active, setActive] = useState(0);
   const update = (text: string, caret: number, forced = false) => {
-    setResult(suggest(text, caret, project, { forced, extra }));
+    setResult(suggest(text, caret, project, { forced, extra, owner }));
     setActive(0);
   };
   const apply = (s: Suggestion) => {
@@ -392,7 +404,19 @@ export function CodeInput({
   const close = useCallback(() => setResult(null), []);
   const props = {
     ref,
-    className: "mono code-input",
+    className: `mono code-input ${className}`,
+    onDragOver: (e: React.DragEvent<HTMLTextAreaElement & HTMLInputElement>) => {
+      if (!draggedItems(e.dataTransfer, project)) return;
+      e.preventDefault(); e.stopPropagation(); e.dataTransfer.dropEffect = variableDrop(e.dataTransfer, project) ? "copy" : "none";
+    },
+    onDrop: (e: React.DragEvent<HTMLTextAreaElement & HTMLInputElement>) => {
+      if (!draggedItems(e.dataTransfer, project)) return;
+      e.preventDefault(); e.stopPropagation();
+      const name = variableDrop(e.dataTransfer, project); if (!name) return;
+      const start = e.currentTarget.selectionStart ?? value.length, end = e.currentTarget.selectionEnd ?? start;
+      onChange(value.slice(0, start) + name + value.slice(end)); close();
+      requestAnimationFrame(() => { ref.current?.focus(); ref.current?.setSelectionRange(start + name.length, start + name.length); });
+    },
     value,
     placeholder,
     spellCheck: false,
@@ -402,25 +426,33 @@ export function CodeInput({
       onChange(e.target.value);
       update(e.target.value, e.target.selectionStart ?? e.target.value.length);
     },
-    onBlur: close,
+    onBlur: (e: React.FocusEvent<HTMLTextAreaElement & HTMLInputElement>) => { close(); onBlur?.(e); },
+    onClick: close,
     onKeyDown: (e: React.KeyboardEvent<HTMLTextAreaElement & HTMLInputElement>) => {
+      if (e.nativeEvent.isComposing) return;
       if (e.key === " " && (e.ctrlKey || e.metaKey)) {
         e.preventDefault();
+        e.stopPropagation();
         update(value, e.currentTarget.selectionStart ?? value.length, true);
         return;
       }
-      if (!result) return;
+      if (!result) { onUnhandledKeyDown?.(e); return; }
       const n = result.items.length;
       if (e.key === "ArrowDown" || e.key === "ArrowUp") {
         e.preventDefault();
+        e.stopPropagation();
         setActive((i) => (i + (e.key === "ArrowDown" ? 1 : -1) + n) % n);
       } else if (e.key === "Enter" || e.key === "Tab") {
         e.preventDefault();
+        e.stopPropagation();
         apply(result.items[active]);
       } else if (e.key === "Escape") {
         e.preventDefault();
         e.stopPropagation();
         setResult(null);
+      } else {
+        if (["ArrowLeft", "ArrowRight", "Home", "End"].includes(e.key)) close();
+        onUnhandledKeyDown?.(e);
       }
     },
   };

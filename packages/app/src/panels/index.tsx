@@ -1,8 +1,7 @@
 // точка входа панелей: сборка свойств по текущему выделению + реэкспорт наружу
 import { useStore } from "../store";
 import { canvasAtPath, linkId } from "@visink/core";
-import { VariableProps, ListProps, FunctionProps } from "./logicProps";
-import { CardProps, LinkProps, MultiCardProps } from "./cardProps";
+import { LinkProps } from "./cardProps";
 import { CanvasProps, ProjectProps, EntityProps } from "./projectProps";
 
 export function Properties() {
@@ -17,24 +16,18 @@ export function Properties() {
   const canvas = root ? canvasAtPath(root, flowPath) : undefined;
   const link = canvas && selectedLink ? canvas.links.find((l) => linkId(l) === selectedLink) : undefined;
   const card = canvas && selection.length === 1 ? canvas.cards.find((c) => c.id === selection[0]) : undefined;
+  const note = canvas && selection.length === 1 ? canvas.notes.find((n) => n.id === selection[0]) : undefined;
   const entity = selectedEntity ? project.entities.find((e) => e.id === selectedEntity) : undefined;
 
+  if (inspect || card || selection.length > 1) return null;
   return (
     <aside className="properties">
-      {inspect?.kind === "var" ? (
-        <VariableProps key={inspect.name} name={inspect.name} project={project} />
-      ) : inspect?.kind === "list" ? (
-        <ListProps key={inspect.name} name={inspect.name} project={project} />
-      ) : inspect?.kind === "func" ? (
-        <FunctionProps key={inspect.name} name={inspect.name} project={project} />
-      ) : entity ? (
+      {entity ? (
         <EntityProps entity={entity} project={project} />
       ) : link && canvas && key ? (
         <LinkProps key={selectedLink} link={link} canvas={canvas} canvasKey={key} project={project} />
-      ) : card && canvas && key ? (
-        <CardProps key={card.id} card={card} canvas={canvas} canvasKey={key} project={project} />
-      ) : selection.length > 1 && canvas ? (
-        <MultiCardProps canvas={canvas} selection={selection} project={project} />
+      ) : note ? (
+        <label className="field"><span className="field-label">Заметка</span><textarea aria-label="Заметка" rows={8} value={note.text} onChange={(e) => useStore.getState().editCanvas((c) => { const n = c.notes.find((n) => n.id === note.id); if (n) n.text = e.target.value; })} /></label>
       ) : (
         <>
           {canvas && key && <CanvasProps canvas={canvas} canvasKey={key} project={project} />}

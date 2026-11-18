@@ -1,5 +1,6 @@
+import { NamespaceField } from "../NamespaceField";
 // свойства файла (Canvas), проекта и персонажей (Entity)
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import type { Canvas, Entity, Project } from "@visink/core";
 import { flowCards, isValidInkName } from "@visink/core";
 import { useStore } from "../store";
@@ -7,7 +8,6 @@ import { askUser } from "../tauriFs";
 import { jumpTargets, renameCanvas } from "../ops";
 import { Combobox } from "../ui";
 import { characterOptions, Field, PortraitPreview, Select, Text } from "./fields";
-import { groupNames } from "./tree";
 
 export function CanvasProps({ canvas, canvasKey, project }: { canvas: Canvas; canvasKey: string; project: Project }) {
   const { edit, setActiveCanvas } = useStore.getState();
@@ -35,14 +35,6 @@ export function CanvasProps({ canvas, canvasKey, project }: { canvas: Canvas; ca
         hint={!isValidInkName(id) ? <span className="bad">только латиница, цифры и _</span> : idTaken ? <span className="bad">имя занято</span> : "переходы в этот файл обновятся сами"}
       >
         <input className="mono" spellCheck={false} autoCapitalize="off" autoCorrect="off" value={id} onChange={(e) => setId(e.target.value)} onBlur={applyId} onKeyDown={(e) => e.key === "Enter" && applyId()} />
-      </Field>
-      <Field label="Папка" hint="для порядка в списке файлов; на ink не влияет">
-        <Combobox
-          value={canvas.group ?? ""}
-          options={groupNames(Object.values(project.canvases))}
-          placeholder="Акт 1, Кампус…"
-          onChange={(g) => edit((p) => (p.canvases[canvasKey].group = g || undefined))}
-        />
       </Field>
       <Field label="Владелец" hint="главный собеседник: спикер новых реплик">
         <Select
@@ -76,8 +68,7 @@ export function ProjectProps({ project }: { project: Project }) {
         <Text value={project.settings.name} onChange={(v) => edit((p) => (p.settings.name = v))} />
       </Field>
       <Field
-        label="Запуск всей истории"
-        hint="куда переходит main.ink — для Inky и прогона всей истории. Godot запускает диалоги сам: ChoosePathString(&quot;файл&quot;). Пусто — история сразу заканчивается."
+        label="Файл запуска"
       >
         <Combobox mono value={project.settings.start ?? ""} options={targets} placeholder="например, dean" onChange={(v) => edit((p) => (p.settings.start = v || undefined))} />
       </Field>
@@ -99,29 +90,21 @@ export function EntityProps({ entity, project }: { entity: Entity; project: Proj
       e[field] = value;
     });
   const uses = Object.values(project.canvases).reduce((n, c) => n + flowCards(c).filter((x) => x.card.speaker === entity.id).length, 0);
+  const [naming, setNaming] = useState(false);
+  const [name, setName] = useState(entity.name);
+  const cancelled = useRef(false);
+  const startName = () => { cancelled.current = false; setName(entity.name); setNaming(true); };
+  const commitName = () => { if (!cancelled.current && name.trim()) set("name", name.trim()); setNaming(false); };
   return (
-    <div className="props">
-      <div className="props-title">
-        Персонаж <span className="mono muted">{entity.id}</span>
+    <div className="props entity-props">
+      {naming ? <input className="entity-title-input" aria-label="Имя сущности" autoFocus value={name} onChange={(e) => setName(e.target.value)} onBlur={commitName} onKeyDown={(e) => { if (e.key === "Enter") commitName(); if (e.key === "Escape") { cancelled.current = true; setNaming(false); } }} /> : <h2 className="entity-title" tabIndex={0} title="Двойной щелчок — переименовать" onDoubleClick={startName} onKeyDown={(e) => { if (e.key === "Enter" || e.key === "F2") startName(); }}>{entity.name}</h2>}
+      <div className="entity-intro"><PortraitPreview entity={entity} /><textarea aria-label="Описание сущности" placeholder="Описание (необязательно)" rows={3} value={entity.description ?? ""} onChange={(e) => set("description", e.target.value || undefined)} /></div>
+      <div className="entity-fields">
+        <NamespaceField key={entity.id} project={project} id={entity.id} />
+        <Field label="Имя в ink"><Text value={entity.inkName} onChange={(v) => set("inkName", v)} /></Field>
+        <Field label="Портрет"><Text value={entity.portrait ?? ""} placeholder="assets/portraits/dean.png" onChange={(v) => set("portrait", v || undefined)} /></Field>
+        <Field label="Цвет"><input type="color" value={entity.color} onChange={(e) => set("color", e.target.value)} /></Field>
       </div>
-      <Field label="Имя">
-        <Text value={entity.name} onChange={(v) => set("name", v)} />
-      </Field>
-      <Field label="Имя в ink" hint="«ДЕКАН: текст»; пусто — строка без префикса (рассказчик)">
-        <Text value={entity.inkName} onChange={(v) => set("inkName", v)} />
-      </Field>
-      <Field label="Цвет">
-        <input type="color" value={entity.color} onChange={(e) => set("color", e.target.value)} />
-      </Field>
-      <Field label="Папка" hint="для порядка в списке персонажей">
-        <Combobox value={entity.group ?? ""} options={groupNames(project.entities)} placeholder="Преподаватели, Студенты…" onChange={(g) => set("group", g || undefined)} />
-      </Field>
-      <Field label="Портрет" hint="путь в проекте, уходит в manifest.json">
-        <div className="portrait-row">
-          <PortraitPreview entity={entity} />
-          <Text mono value={entity.portrait ?? ""} placeholder="assets/portraits/dean.png" onChange={(v) => set("portrait", v || undefined)} />
-        </div>
-      </Field>
       <label className="check">
         <input type="checkbox" checked={!!entity.isPlayer} onChange={(e) => set("isPlayer", e.target.checked || undefined)} />
         Это игрок — его реплики становятся вариантами выбора
@@ -129,14 +112,14 @@ export function EntityProps({ entity, project }: { entity: Entity; project: Proj
       <div className="muted pad">Реплик: {uses}</div>
       <button
         className="danger"
-        disabled={uses > 0}
+        disabled={uses > 0 || [...project.variables.vars, ...project.variables.lists, ...project.variables.functions].some((v) => v.owner === entity.id)}
         title={uses ? "Сначала уберите персонажа из реплик" : ""}
         onClick={() => {
           edit((p) => (p.entities = p.entities.filter((e) => e.id !== entity.id)));
           selectEntity(null);
         }}
       >
-        Удалить персонажа
+        Удалить сущность
       </button>
     </div>
   );

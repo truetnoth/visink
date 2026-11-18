@@ -1,6 +1,6 @@
 [package]
 name = "visink"
-version = "1.0.1"
+version = "0.5.0"
 description = "Visink — визуальный редактор диалогов ink"
 edition = "2021"
 

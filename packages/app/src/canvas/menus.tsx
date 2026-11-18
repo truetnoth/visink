@@ -6,7 +6,7 @@ import type { Card, CardType, Project } from "@visink/core";
 import { CodeInput } from "../ui";
 
 export type MenuItem = { label: string; color?: string; icon: LucideIcon; type?: CardType | "note"; init?: Partial<Card>; run?: () => void; children?: MenuItem[] };
-export type MenuState = { x: number; y: number; at: { x: number; y: number }; from?: string; port?: "yes" | "no"; count?: number };
+export type MenuState = { x: number; y: number; at: { x: number; y: number }; from?: string; port?: "yes" | "no"; count?: number; placement?: "cursor" | "branch" };
 export type PinEditorState = { id: string; field: "condition" | "action"; x: number; y: number };
 
 export function CreateMenu({ menu, items, onPick, onClose }: { menu: MenuState; items: MenuItem[]; onPick: (item: MenuItem) => void; onClose: () => void }) {
@@ -16,6 +16,7 @@ export function CreateMenu({ menu, items, onPick, onClose }: { menu: MenuState; 
   return <div ref={ref} className="create-menu" style={{ left: Math.max(8, menu.x), top: Math.max(8, menu.y) }} tabIndex={-1} onBlur={(e) => { if (!e.currentTarget.contains(e.relatedTarget as globalThis.Node | null)) onClose(); }} onKeyDown={(e) => {
     e.stopPropagation();
     if (e.key === "Escape") onClose();
+    else if (!items.length) return;
     else if (e.key === "ArrowDown") setActive((i) => (i + 1) % items.length);
     else if (e.key === "ArrowUp") setActive((i) => (i - 1 + items.length) % items.length);
     else if (e.key === "Enter" && !items[active].children) onPick(items[active]);

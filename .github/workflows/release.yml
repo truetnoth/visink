@@ -53,7 +53,7 @@ jobs:
           tagName: ${{ github.ref_type == 'tag' && github.ref_name || 'v__VERSION__' }}
           releaseName: Visink ${{ github.ref_type == 'tag' && github.ref_name || 'v__VERSION__' }}
           releaseBody: |
-            Сборки для macOS (Apple Silicon, .dmg) и Windows (установщик .exe). Установленный Visink сам предложит обновиться при запуске.
+            Сборки для macOS (Apple Silicon, .dmg) и Windows (установщик .exe). При переходе с 1.x на 0.5 установите эту версию вручную: автоматическое обновление не выполняет понижение версии.
             Сборки не подписаны: на macOS после установки выполните `xattr -cr /Applications/Visink.app`, на Windows в SmartScreen — «Подробнее» → «Выполнить в любом случае».
           releaseDraft: false
           prerelease: false

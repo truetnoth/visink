@@ -1,3 +1,5 @@
+import type { CardControlField } from "./canvas/CardControl";
+import { migrateFolders } from "@visink/core";
 import { create } from "zustand";
 import { produce } from "immer";
 import { temporal } from "zundo";
@@ -57,6 +59,8 @@ interface State {
   selectedLink: string | null;
   selectedLinks: string[];
   selectedEntity: string | null;
+  logicOwner: string | null;
+  selectLogicScope: (owner: string | null) => void;
   /** переменная или список, открытые на экране логики */
   inspect: { kind: "var" | "list" | "func"; name: string; owner?: string } | null;
   check: CheckResult | null;
@@ -67,6 +71,7 @@ interface State {
   focus: { canvas: string; card: string; nonce: number } | null;
   /** новую карточку сразу открыть на ввод текста */
   editRequest: { card: string; nonce: number } | null;
+  pinRequest: { card: string; field: "condition" | "action"; nonce: number } | null;
 
   edit: (fn: (p: Project) => void) => void;
   editCanvas: (fn: (c: Canvas, p: Project) => void) => void;
@@ -75,7 +80,8 @@ interface State {
   openEditor: () => void;
   closeEditor: () => void;
   /** настройки карточки: одиночная становится выделением, группа сохраняется */
-  openCardSettings: (id: string) => void;
+  cardControl: { card: string; field: CardControlField; nonce: number } | null;
+  openCardControl: (id: string, field: CardControlField) => void;
   setSelection: (ids: string[], link?: string | null, links?: string[]) => void;
   selectEntity: (id: string | null) => void;
   inspectVariable: (kind: "var" | "list" | "func", name: string | null, owner?: string) => void;
@@ -116,6 +122,7 @@ export const useStore = create<State>()(
       selection: [],
       selectedLink: null, selectedLinks: [],
       selectedEntity: null,
+      logicOwner: null,
       inspect: null,
       check: null,
       dirty: false,
@@ -123,6 +130,8 @@ export const useStore = create<State>()(
       statusNonce: 0,
       focus: null,
       editRequest: null,
+      pinRequest: null,
+      cardControl: null,
 
       edit(fn) {
         const project = get().project;
@@ -141,14 +150,19 @@ export const useStore = create<State>()(
         });
       },
 
-      setActiveCanvas: (key, flowPath = []) => set({ activeCanvas: key, flowPath, view: "canvas", editorOpen: false, selection: [], selectedLink: null, selectedLinks: [], selectedEntity: null, inspect: null }),
-      setView: (view) => set({ view, editorOpen: false }),
-      openEditor: () => set({ editorOpen: true }),
+      setActiveCanvas: (key, flowPath = []) => set({ activeCanvas: key, flowPath, view: "canvas", editorOpen: false, cardControl: null, selection: [], selectedLink: null, selectedLinks: [], selectedEntity: null, inspect: null }),
+      setView: (view) => set({ view, editorOpen: false, cardControl: null }),
+      openEditor: () => {
+        const s = get();
+        const c = s.project && s.activeCanvas ? canvasAtPath(s.project.canvases[s.activeCanvas], s.flowPath) : null;
+        if (s.inspect || s.selection.some((id) => c?.cards.some((card) => card.id === id))) return;
+        set({ editorOpen: true, cardControl: null });
+      },
       closeEditor: () => set({ editorOpen: false }),
-      openCardSettings(id) {
+      openCardControl(id, field) {
         const { selection, setSelection } = get();
         if (!(selection.length > 1 && selection.includes(id))) setSelection([id]);
-        set({ editorOpen: true });
+        set({ cardControl: { card: id, field, nonce: Date.now() }, editorOpen: false });
       },
       setSelection: (ids, link = null, links = link ? [link] : []) => {
         const state = get();
@@ -164,9 +178,13 @@ export const useStore = create<State>()(
           inspect: picked ? null : state.inspect,
         });
       },
-      selectEntity: (id) => set({ selectedEntity: id, view: "characters", editorOpen: false, inspect: null, selection: [], selectedLink: null, selectedLinks: [] }),
-      clearInspector: () => set({ editorOpen: false, selectedLink: null, selectedLinks: [] }),
-      inspectVariable: (kind, name, owner) => set({ inspect: name ? { kind, name, owner } : null, view: owner ? "characters" : "logic", selectedEntity: owner ?? get().selectedEntity, editorOpen: false, selection: [], selectedLink: null, selectedLinks: [] }),
+      selectEntity: (id) => set({ selectedEntity: id, view: "characters", editorOpen: false, cardControl: null, inspect: null, selection: [], selectedLink: null, selectedLinks: [] }),
+      clearInspector: () => set({ cardControl: null, editorOpen: false, selectedLink: null, selectedLinks: [] }),
+      selectLogicScope: (owner) => set({ logicOwner: owner, view: "logic", selectedEntity: null, inspect: null, editorOpen: false, cardControl: null, selection: [], selectedLink: null, selectedLinks: [] }),
+      inspectVariable: (kind, name, owner) => {
+        const entity = get().project?.entities.some((e) => e.id === owner);
+        set({ inspect: name ? { kind, name, owner } : null, view: entity ? "characters" : "logic", logicOwner: entity ? null : owner ?? null, selectedEntity: entity ? owner! : null, editorOpen: false, cardControl: null, selection: [], selectedLink: null, selectedLinks: [] });
+      },
       focusLink: (canvas, link) => {
         const root = get().project?.canvases[canvas];
         const flowPath = root ? flowCards(root).find((x) => x.card.id === link.from)?.path ?? [] : [];
@@ -176,10 +194,12 @@ export const useStore = create<State>()(
           flowPath,
           view: "canvas",
           editorOpen: false,
+          cardControl: null,
           selection: [],
           selectedLink: id,
           selectedLinks: [id],
           inspect: null,
+          selectedEntity: null,
           focus: { canvas, card: link.from, nonce: Date.now() },
         });
       },
@@ -191,9 +211,11 @@ export const useStore = create<State>()(
           flowPath,
           view: "canvas",
           editorOpen: false,
+          cardControl: null,
           selection: card ? [card] : [],
           selectedLink: null, selectedLinks: [],
           inspect: null,
+          selectedEntity: null,
           focus: card ? { canvas, card, nonce: Date.now() } : null,
         });
       },
@@ -234,10 +256,12 @@ export const useStore = create<State>()(
             flowPath: [],
             view: "canvas",
             editorOpen: false,
+          cardControl: null,
             selection: [],
             selectedLink: null, selectedLinks: [],
             inspect: null,
             selectedEntity: null,
+            logicOwner: null,
             dirty: false,
             statusNonce: Date.now(), status: `Открыт проект «${project.settings.name}»`,
           });
@@ -252,6 +276,8 @@ export const useStore = create<State>()(
       },
 
       openInMemory(project) {
+        project = structuredClone(project);
+        migrateFolders(project);
         loading = true;
         set({
           project,
@@ -261,10 +287,12 @@ export const useStore = create<State>()(
           flowPath: [],
           view: "canvas",
           editorOpen: false,
+          cardControl: null,
           selection: [],
           selectedLink: null, selectedLinks: [],
           inspect: null,
           selectedEntity: null,
+          logicOwner: null,
           dirty: false,
           statusNonce: Date.now(), status: "Проект в памяти — чтобы сохранять, откройте папку проекта",
         });
@@ -435,4 +463,11 @@ export function recentProjects(): string[] {
   } catch {
     return [];
   }
+}
+
+/** One structural operation is always a separate undo step. */
+export function editAtomic(fn: (project: Project) => void) {
+  flushHistory?.();
+  useStore.getState().edit(fn);
+  flushHistory?.();
 }

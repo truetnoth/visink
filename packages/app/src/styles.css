@@ -9,8 +9,8 @@
   --border-strong: #aeb4bf;
   --text: #1f2328;
   --muted: #6b7280;
-  --accent: #d9861a;
-  --accent-soft: #fbe7c8;
+  --accent: #008BB5;
+  --accent-soft: #d9f0f7;
   --selection: #7c8794;
   --selected-bg: #dce0e5;
   --on-accent: #ffffff;
@@ -37,7 +37,7 @@
   :root:not([data-theme="light"]) {
     --bg: #1e2a2f; --grid: #26353b; --panel: #26343a; --panel-2: #30424a; --field: #182327;
     --border: #3a4d55; --border-strong: #557079; --text: #dde6e9; --muted: #8ea2a9;
-    --accent: #f0a030; --accent-soft: #4a3a1c; --selection: #a0afb6; --selected-bg: #3b4a51; --on-accent: #1e2a2f; --service: #5d7680;
+    --accent: #008BB5; --accent-soft: #173f4b; --selection: #a0afb6; --selected-bg: #3b4a51; --on-accent: #ffffff; --service: #5d7680;
     --card-bg: #2a3940; --card-player: #2a3940; --card-border: #3f545c; --card-shadow: 0 2px 8px #0009; --card-id: #7d939a;
     --cond: #f5c451; --action: #6fd49a; --menu-text: #f3c27a;
     --note-bg: #4a4220; --note-border: #6e6230; --note-text: #f3e7b3;
@@ -47,7 +47,7 @@
 :root[data-theme="dark"] {
   --bg: #1e2a2f; --grid: #26353b; --panel: #26343a; --panel-2: #30424a; --field: #182327;
   --border: #3a4d55; --border-strong: #557079; --text: #dde6e9; --muted: #8ea2a9;
-  --accent: #f0a030; --accent-soft: #4a3a1c; --selection: #a0afb6; --selected-bg: #3b4a51; --on-accent: #1e2a2f; --service: #5d7680;
+  --accent: #008BB5; --accent-soft: #173f4b; --selection: #a0afb6; --selected-bg: #3b4a51; --on-accent: #ffffff; --service: #5d7680;
   --card-bg: #2a3940; --card-player: #2a3940; --card-border: #3f545c; --card-shadow: 0 2px 8px #0009; --card-id: #7d939a;
   --cond: #f5c451; --action: #6fd49a; --menu-text: #f3c27a;
   --note-bg: #4a4220; --note-border: #6e6230; --note-text: #f3e7b3;
@@ -232,7 +232,6 @@ input[type="checkbox"]:focus-visible { outline: 2px solid var(--accent); outline
 }
 .problem-badge.error { background: var(--error); }
 .problem-badge.warning { background: var(--warning); color: #3b2a00; }
-.port-label { position: absolute; right: -30px; font-size: .85em; color: var(--muted); }
 .react-flow__edge.edge-yes path { stroke: var(--good); }
 .react-flow__edge.edge-no path { stroke: var(--error); }
 .react-flow__edge.selected path { stroke: var(--selection); }
@@ -344,15 +343,21 @@ button.link:hover { color: var(--text); }
 
 /* текст карточки: правка на месте без скачков */
 .card { width: 100%; }
-.card-text.editing { display: block; -webkit-line-clamp: unset; overflow: visible; outline: none; cursor: text; border-radius: 3px; box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 35%, transparent); background: color-mix(in srgb, var(--accent) 6%, transparent); }
+.card-text.editing { display: block; -webkit-line-clamp: unset; overflow: visible; outline: none; cursor: text; }
 .card-text.editing:empty::before { content: attr(data-placeholder); color: var(--muted); font-style: italic; }
+.inline-condition { min-width: 0; min-height: 0; display: grid; }
+.inline-condition-input, .inline-condition-input:focus {
+  width: 100%; height: 100%; min-height: 1.4em; margin: 0; padding: 0; resize: none;
+  border: none; border-radius: 0; background: transparent; box-shadow: none; outline: none;
+  line-height: inherit; overflow: auto;
+}
+.inline-condition-input::placeholder { color: var(--muted); font-style: italic; opacity: .7; }
 
 /* размер карточки, заданный вручную */
 .card.fixed-h { height: 100%; display: flex; flex-direction: column; }
 .card.fixed-h .card-body { flex: 1; min-height: 0; overflow: hidden; -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 18px), transparent); mask-image: linear-gradient(to bottom, #000 calc(100% - 18px), transparent); }
 .card.fixed-h .card-text { display: block; -webkit-line-clamp: unset; }
-.card.fixed-h:has(.editing) { height: auto; min-height: 100%; }
-.card.fixed-h:has(.editing) .card-body { overflow: visible; -webkit-mask-image: none; mask-image: none; }
+.card.fixed-h:has(.editing) .card-body { overflow: auto; -webkit-mask-image: none; mask-image: none; }
 .react-flow__resize-control.card-resize-handle { width: 9px; height: 9px; border-radius: 2px; background: var(--card-bg); border: 1.5px solid var(--accent); }
 .react-flow__resize-control.card-resize-line { border-color: transparent; }
 
@@ -396,23 +401,25 @@ button.link:hover { color: var(--text); }
 .card-flow .card-text { display: block; min-width: 0; width: 100%; }
 .card.fixed-h .card-cell.grow { overflow: hidden; -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 14px), transparent); mask-image: linear-gradient(to bottom, #000 calc(100% - 14px), transparent); }
 .card-flow.fixed-h .card-cell.grow { -webkit-mask-image: none; mask-image: none; }
-.card-flow:has(.editing) .card-cell { overflow: visible; }
+.card-flow:has(.editing) .card-cell { overflow: auto; }
 .card.fixed-h .line-body { overflow: hidden; -webkit-mask-image: none; mask-image: none; }
-.card.fixed-h:has(.editing) .card-cell.grow { overflow: visible; -webkit-mask-image: none; mask-image: none; }
+.card.fixed-h:has(.editing) .card-cell.grow { overflow: auto; -webkit-mask-image: none; mask-image: none; }
 
-/* пины: точка по центру края; тянуть стрелку — с неё, по остальному краю — размер */
+/* Пины выступают за карточку; геометрия не меняется при наведении. */
 .react-flow__handle.pin {
-  width: 14px; height: 14px; min-width: 0; min-height: 0; border-radius: 50%; z-index: 3;
-  background: var(--service); border: 2px solid var(--card-bg); box-shadow: 0 0 0 1px #0004;
-  transition: width .1s, height .1s, background .1s; cursor: crosshair;
+  --pin-color: var(--service);
+  width: 14px; height: 20px; min-width: 0; min-height: 0; z-index: 3;
+  background: var(--bg); border: 1px solid var(--pin-color); box-shadow: none;
+  transition: background .1s, border-color .1s; cursor: crosshair;
 }
-.react-flow__handle-left.pin { left: -1px; }
-.react-flow__handle-right.pin { right: -1px; }
-.react-flow__handle.pin:hover, .react-flow__handle.pin.connectingto { width: 18px; height: 18px; background: var(--accent); }
-.react-flow__handle.pin.has-logic.cond { background: var(--cond); }
-.react-flow__handle.pin.has-logic.act { background: var(--action); }
-.react-flow__handle.pin-yes { background: var(--good); }
-.react-flow__handle.pin-no { background: var(--error); }
+.react-flow__handle-left.pin { left: -2px; transform: translate(-100%, -50%); border-radius: 8px 0 0 8px; }
+.react-flow__handle-right.pin { right: -2px; transform: translate(100%, -50%); border-radius: 0 8px 8px 0; }
+.react-flow__handle.pin:hover, .react-flow__handle.pin.connectingto { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 18%, var(--bg)); }
+.react-flow__handle.pin.has-logic { background: color-mix(in srgb, var(--pin-color) 25%, var(--bg)); }
+.react-flow__handle.pin.has-logic.cond { --pin-color: var(--cond); }
+.react-flow__handle.pin.has-logic.act { --pin-color: var(--action); }
+.react-flow__handle.pin-yes { --pin-color: var(--good); }
+.react-flow__handle.pin-no { --pin-color: var(--error); }
 .card-action { color: var(--action); font-size: .92em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 /* края карточки: широкая невидимая зона ресайза, ручки видны только у выделенной */
@@ -432,14 +439,15 @@ button.link:hover { color: var(--text); }
 .view-switcher button { display: inline-flex; align-items: center; gap: 6px; background: none; border-color: transparent; color: var(--muted); }
 .view-switcher button.on { background: var(--selected-bg); border-color: var(--border); color: var(--text); }
 .screen-scroll { flex: 1; min-height: 0; overflow: auto; padding: 18px 22px 36px; }
+.screen-content { width: 100%; max-width: 1120px; margin-inline: auto; min-width: 0; }
 .screen-title { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 16px; }
 .screen-title h2 { margin: 0 0 3px; font-size: 20px; }
 .screen-title p { margin: 0; color: var(--muted); }
-.screen-section-head { display: flex; align-items: center; gap: 8px; margin: 18px 0 8px; }
+.screen-section-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 18px 0 8px; }
 .screen-section-head h3 { margin: 0 auto 0 0; font-size: 15px; }
 .screen-section-head button { display: inline-flex; align-items: center; gap: 5px; }
 .screen-section-head button.danger { margin-top: 0; }
-.logic-workspace { min-width: 760px; }
+.logic-workspace { min-width: 0; }
 .table-scroll { overflow-x: auto; border: 1px solid var(--border); border-radius: 7px; background: var(--panel); }
 .logic-table { border-collapse: collapse; width: 100%; min-width: 960px; }
 .logic-table th { padding: 7px 8px; text-align: left; color: var(--muted); font-size: 11px; text-transform: uppercase; background: var(--panel-2); }
@@ -455,22 +463,33 @@ button.link:hover { color: var(--text); }
 .row-delete { display: grid; place-items: center; padding: 4px; border: none; background: none; color: var(--muted); }
 .row-delete:hover { color: var(--error); }
 .empty-table { padding: 18px; color: var(--muted); text-align: center; }
-.logic-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 10px; }
+.logic-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 340px), 1fr)); gap: 10px; }
 .logic-card { display: grid; gap: 8px; align-content: start; background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 10px; min-width: 0; }
 .logic-card-head { display: flex; align-items: center; gap: 8px; }
 .logic-card-head > input[type="checkbox"] { flex: none; }
-.functions-grid { grid-template-columns: repeat(auto-fill, minmax(420px, 1fr)); }
-.characters-screen { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(260px, 320px) minmax(0, 1fr); }
+.functions-grid { grid-template-columns: repeat(auto-fill, minmax(min(100%, 420px), 1fr)); }
+.characters-screen { flex: 1; min-height: 0; width: calc(100% - 44px); max-width: 1120px; margin: 18px auto 36px; display: grid; grid-template-columns: minmax(260px, 320px) minmax(0, 1fr); overflow: auto; container-type: inline-size; }
 .character-settings { overflow: auto; padding: 16px; background: var(--panel); border-right: 1px solid var(--border); }
 .character-logic { padding-top: 16px; }
+@container (max-width: 720px) {
+  .character-settings { grid-column: 1 / -1; overflow: visible; border-right: none; border-bottom: 1px solid var(--border); }
+  .character-logic { grid-column: 1 / -1; overflow: visible; padding-inline: 16px; }
+}
 
 /* дерево проекта */
-.tree-root { width: 100%; text-align: left; margin-bottom: 5px; font-weight: 600; }
+.tree-root { width: 100%; text-align: left; margin-bottom: 5px; font-weight: 600; display: flex; align-items: center; gap: 6px; }
+.tree-root svg { flex: none; }
 .project-tree > .folder-title { margin-top: 12px; }
 .folder-content { margin-left: 7px; padding-left: 9px; border-left: 1px solid var(--border); }
 .project-tree .folder-content .folder-title { margin-top: 6px; }
 .project-tree .tree { min-width: 0; }
 .project-tree .tree li { flex-wrap: wrap; min-width: 0; }
+.project-tree .tree li.tree-branch { display: block; padding: 0; background: none; cursor: default; }
+.tree-row { display: flex; align-items: center; gap: 6px; padding: 4px 6px; border-radius: 5px; cursor: pointer; min-width: 0; }
+.tree-row:hover { background: var(--panel-2); }
+.tree-row.on { background: var(--selected-bg); }
+.tree-row:focus-visible { outline: 2px solid var(--selection); outline-offset: -2px; }
+.tree-row > .ellipsis { flex: 1; }
 .project-tree .tree li > .ellipsis { flex: 1; min-width: 0; }
 .project-tree .tree-toggle { width: 16px; height: 16px; flex: none; display: grid; place-items: center; padding: 0; border: none; background: none; color: var(--muted); }
 .project-tree .tree-toggle-spacer { width: 16px; height: 16px; flex: none; }
@@ -518,10 +537,6 @@ button.link:hover { color: var(--text); }
 /* карточки и пины */
 .card-cell.grow.has-text { padding-bottom: 24px; }
 .react-flow__node-draggable, .react-flow__node-draggable .card-head { cursor: move; }
-.react-flow__handle.pin { width: 22px; height: 20px; border: 0; border-radius: 3px; box-shadow: none; transition: filter .1s, background .1s; }
-.react-flow__handle-right.pin { right: -7px; clip-path: polygon(0 0, 62% 0, 100% 50%, 62% 100%, 0 100%); }
-.react-flow__handle-left.pin { left: -7px; clip-path: polygon(38% 0, 100% 0, 100% 100%, 38% 100%, 0 50%); }
-.react-flow__handle.pin:hover, .react-flow__handle.pin.connectingto { width: 24px; height: 22px; background: var(--accent); filter: drop-shadow(0 1px 2px #0006); }
 
 /* подсказки */
 .tooltip { position: fixed; z-index: 3000; pointer-events: none; padding: 5px 8px; border-radius: 5px; background: #1f2328; color: #fff; box-shadow: 0 2px 8px #0004; font-size: 12px; line-height: 1.3; text-align: center; white-space: nowrap; }
@@ -551,3 +566,85 @@ button.link:hover { color: var(--text); }
   .testing-screen { grid-template-columns: minmax(0, 1fr) 240px; }
   .testing-toolbar { align-items: flex-start; flex-direction: column; }
 }
+
+.tree-type-icon { flex: none; color: var(--muted); }
+.tree-create-actions { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 12px; }
+.tree-create-actions button { font-size: 11px; padding: 3px 6px; }
+
+/* Стандартный курсор на свободном холсте, включая режим выделения. */
+.react-flow__pane, .react-flow__pane.draggable, .react-flow__pane.selection { cursor: default; }
+.react-flow__pane.dragging { cursor: grabbing; }
+
+.tree-drop-target { outline: 2px solid var(--accent); background: var(--accent-soft); }
+.tree-error { position: sticky; bottom: 0; padding: 8px; background: var(--panel); color: var(--error); border: 1px solid var(--error); border-radius: 6px; font-size: 12px; }
+.tree-error button { float: right; }
+.tree-prompt { width: min(420px, 100%); }
+
+/* Keep tree sources reachable while editing expressions in the properties dialog. */
+.modal-backdrop:has(.editor-modal) { pointer-events: none; }
+.editor-modal { pointer-events: auto; }
+
+.card-cell { cursor: text; display: flex; flex-direction: column; }
+.card-cell > .card-text { flex: 1; min-height: 1.4em; width: 100%; }
+.card-top .card-cell > .card-text { flex: none; }
+
+/* Second wave: compact settings and navigation. */
+.modal.settings { width: min(400px, 100%); padding: 16px; }
+.settings .modal-head { margin-bottom: 16px; }
+.settings .modal-head .muted { font-size: 11px; }
+.setting-row { display: grid; grid-template-columns: 1fr 150px; align-items: center; gap: 12px; margin: 12px 0; }
+.settings .check { margin: 12px 0; }
+.view-switcher { flex-direction: row-reverse; }
+.view-switcher .flow-breadcrumbs { margin-left: 0; }
+.view-switcher .flow-breadcrumbs button.on { background: transparent; border-color: transparent; }
+.flow-breadcrumbs button:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.testing-toggle { margin-left: auto; }
+
+/* A table's width belongs to its columns, never to the whole window. */
+.screen-content { max-width: 1000px; }
+.logic-table { table-layout: fixed; min-width: 0; width: auto; }
+.logic-table th { position: relative; padding: 7px 5px; overflow-wrap: anywhere; }
+.logic-table td { padding: 5px 4px; overflow: hidden; }
+.logic-table td:nth-child(3), .logic-table td:nth-child(4) { min-width: 0; }
+.logic-table input, .logic-table .select { min-width: 0; }
+.column-resizer { position: absolute; top: 0; right: -3px; bottom: 0; width: 7px; cursor: col-resize; touch-action: none; z-index: 1; }
+.column-resizer:hover, .column-resizer:focus-visible { background: var(--accent); outline: none; }
+.column-resizer:active { background: var(--accent); }
+.logic-card:focus-within { border-color: var(--accent); }
+.characters-screen { display: block; max-width: 680px; width: calc(100% - 32px); margin: 16px auto; overflow: auto; }
+.character-settings { padding: 0; border: none; background: none; overflow: visible; }
+.character-logic { padding: 0; overflow: visible; }
+.entity-title { margin: 0 0 12px; font-size: 20px; cursor: text; }
+.entity-title-input { margin-bottom: 12px; font-size: 20px; font-weight: 600; }
+.entity-intro { display: grid; grid-template-columns: 100px minmax(0, 1fr); gap: 12px; margin-bottom: 12px; }
+.entity-intro .portrait-preview { width: 100px; height: 100px; background: var(--panel-2); display: grid; place-items: center; }
+.entity-intro textarea { min-height: 100px; }
+.entity-fields { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 8px 12px; }
+.entity-fields .field { margin: 0; }
+.entity-props > .check { margin: 12px 0 6px; }
+.entity-props > .pad { padding: 4px 0; }
+.entity-props > .danger { margin-top: 4px; }
+.tree-branch > .nested-tree { min-height: 8px; padding-bottom: 5px; }
+
+/* Card controls stay on the canvas; popovers are anchored in screen coordinates. */
+.card-head .card-inline-button, .card-inline-button { border: 0; background: none; color: inherit; padding: 0; font: inherit; text-align: left; border-radius: 3px; }
+.card-inline-button:hover { background: #0001; }
+.card-head .card-inline-button { font-weight: inherit; }
+.card-head .card-inline-button:focus-visible, .card-inline-button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.card-avatar-button { border: 0; border-radius: 3px; background: none; padding: 0; width: 66px; height: 66px; flex: none; }
+.card-avatar-button .card-avatar { width: 100%; height: 100%; }
+.card .card-repeat { text-align: right; width: 100%; color: var(--muted); font-size: 11px; padding: 2px 4px; }
+.card-jump { border-radius: 5px; box-shadow: var(--card-shadow); }
+.card-jump .card-head { border-radius: 3px 3px 0 0; padding: 5px 8px; min-height: 28px; }
+.card-jump .card-body { padding: 10px; }
+.card-jump .jump-target { width: 100%; overflow-wrap: anywhere; min-height: 28px; }
+.card-hub .card-type .card-text { padding: 0; color: inherit; font-size: inherit; min-height: 0; }
+.card-control-popup { width: 320px; max-width: calc(100vw - 16px); max-height: calc(100vh - 16px); padding: 10px; z-index: 3000; }
+.card-control-title { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 8px; }
+.card-control-title button { padding: 0 6px; }
+.card-control-options { max-height: 240px; overflow: auto; margin-top: 6px; display: grid; gap: 2px; }
+.card-control-options button { text-align: left; border: 0; background: none; white-space: normal; overflow-wrap: anywhere; }
+.card-control-options button:hover, .card-control-options button.on { background: var(--selected-bg); }
+.card-control-popup .bad { margin-top: 8px; }
+
+.about-logo { display: block; width: 100%; height: auto; margin: 16px 0; border-radius: 6px; }

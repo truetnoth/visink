@@ -18,6 +18,7 @@ import type { Card, CardType } from "@visink/core";
 import { canvasAtPath, flowCards, isPlayerCard, linkId } from "@visink/core";
 import { rootCard } from "@visink/compiler";
 import { useStore } from "../store";
+import { projectCardLabels, jumpDestination } from "../cardLabels";
 import { mergeEdges, mergeNodes } from "../canvasNodes";
 import {
   CARD_W,
@@ -75,6 +76,14 @@ function Flow({ flowKey, viewports }: { flowKey: string; viewports: Map<string, 
   };
   const [pinPicker, setPinPicker] = useState<{ id: string; port?: "yes" | "no"; x: number; y: number } | null>(null);
   const [pinEditor, setPinEditor] = useState<PinEditorState | null>(null);
+  const pinRequest = useStore((s) => s.pinRequest);
+  useEffect(() => {
+    if (!pinRequest) return;
+    const rect = wrapper.current?.getBoundingClientRect();
+    if (!rect) return;
+    setPinEditor({ id: pinRequest.card, field: pinRequest.field, x: rect.left + rect.width / 2, y: rect.top + 80 });
+    useStore.setState({ pinRequest: null });
+  }, [pinRequest]);
   const [menu, setMenu] = useState<MenuState | null>(null);
 
   const root = project && key ? project.canvases[key] : null;
@@ -109,7 +118,7 @@ function Flow({ flowKey, viewports }: { flowKey: string; viewports: Map<string, 
     const down = (e: MouseEvent) => {
       const target = e.target as HTMLElement;
       if (pinPicker && !target.closest(".pin-count-menu, .create-menu")) setPinPicker(null);
-      if (pinEditor && !target.closest(".pin-editor-wrap") && !target.closest(".popup")) setPinEditor(null);
+      if (pinEditor && !target.closest(".pin-editor-wrap") && !target.closest(".popup") && !target.closest(".project-tree")) setPinEditor(null);
     };
     document.addEventListener("mousedown", down, true);
     return () => document.removeEventListener("mousedown", down, true);
@@ -121,6 +130,7 @@ function Flow({ flowKey, viewports }: { flowKey: string; viewports: Map<string, 
   // неизменённые карточки остаются теми же объектами (см. mergeNodes) — memo не сбрасывается.
   const derivedNodes = useMemo<Node[]>(() => {
     if (!canvas || !project) return [];
+    const { targets } = projectCardLabels(project);
     const entities = new Map(project.entities.map((e) => [e.id, e]));
     const cards: Node<CardData>[] = canvas.cards.map((card) => {
       const pr = problems.get(card.id);
@@ -133,6 +143,7 @@ function Flow({ flowKey, viewports }: { flowKey: string; viewports: Map<string, 
         ...(compactWidth == null && canvas.layout[card.id]?.h != null ? { height: canvas.layout[card.id]!.h } : {}),
         data: {
           card,
+          targetLabel: card.type === "jump" ? jumpDestination(targets, card.target) : undefined,
           speaker: card.speaker ? entities.get(card.speaker) : undefined,
           player: isPlayerCard(project, card),
           isStart: canvas.start === card.id,
@@ -150,7 +161,8 @@ function Flow({ flowKey, viewports }: { flowKey: string; viewports: Map<string, 
     return [...notes, ...cards, ...placeholders];
   }, [canvas, project, problems, activeDrafts, onPin, onBranch]);
 
-  const [nodes, setNodes, onNodesChange] = useNodesState<Node>(derivedNodes);
+  // Начальное выделение нужно до первого события React Flow при переходе из дерева.
+  const [nodes, setNodes, onNodesChange] = useNodesState<Node>(derivedNodes.map((node) => ({ ...node, selected: selection.includes(node.id) })));
   useEffect(() => {
     setNodes((prev) => mergeNodes(prev, derivedNodes, new Set(useStore.getState().selection)));
   }, [derivedNodes, setNodes]);
@@ -178,7 +190,7 @@ function Flow({ flowKey, viewports }: { flowKey: string; viewports: Map<string, 
     return [...real, ...temporary];
   }, [canvas, badLinks, activeDrafts]);
 
-  const [edges, setEdges, onEdgesChange] = useEdgesState<Edge<EdgeData>>(derivedEdges);
+  const [edges, setEdges, onEdgesChange] = useEdgesState<Edge<EdgeData>>(derivedEdges.map((edge) => ({ ...edge, selected: useStore.getState().selectedLinks.includes(edge.id) })));
   useEffect(() => {
     setEdges((prev) => mergeEdges(prev, derivedEdges, new Set(useStore.getState().selectedLinks)));
   }, [derivedEdges, setEdges]);
@@ -198,8 +210,9 @@ function Flow({ flowKey, viewports }: { flowKey: string; viewports: Map<string, 
       const state = useStore.getState();
       if (state.focus?.nonce !== focus.nonce) return;
       const currentRoot = state.project?.canvases[focus.canvas];
-      const at = currentRoot && canvasAtPath(currentRoot, state.flowPath)?.layout[focus.card];
-      if (at) setCenter(at.x + (at.w ?? CARD_W) / 2, at.y + 60, { zoom: 1, duration: 300 });
+      const focusedCanvas = currentRoot && canvasAtPath(currentRoot, state.flowPath);
+      const at = focusedCanvas?.layout[focus.card] ?? focusedCanvas?.notes.find((n) => n.id === focus.card);
+      if (at) setCenter(at.x + ("w" in at ? at.w ?? CARD_W : CARD_W) / 2, at.y + 60, { zoom: 1, duration: 300 });
       useStore.setState({ focus: null });
     }, 80);
     return () => clearTimeout(t);
@@ -223,9 +236,9 @@ function Flow({ flowKey, viewports }: { flowKey: string; viewports: Map<string, 
   );
 
   const openMenu = useCallback(
-    (clientX: number, clientY: number, from?: string, port?: "yes" | "no", count = 1, keepPicker = false) => {
+    (clientX: number, clientY: number, from?: string, port?: "yes" | "no", count = 1, keepPicker = false, placement: "cursor" | "branch" = "branch") => {
       const rect = wrapper.current?.getBoundingClientRect();
-      const at = screenToFlowPosition({ x: clientX, y: clientY - 30 });
+      const at = screenToFlowPosition({ x: clientX, y: placement === "cursor" ? clientY : clientY - 30 });
       if (!keepPicker) setPinPicker(null);
       setPinEditor(null);
       setMenu({
@@ -235,6 +248,7 @@ function Flow({ flowKey, viewports }: { flowKey: string; viewports: Map<string, 
         from,
         port,
         count,
+        placement,
       });
     },
     [screenToFlowPosition],
@@ -256,7 +270,7 @@ function Flow({ flowKey, viewports }: { flowKey: string; viewports: Map<string, 
       const point = "changedTouches" in event ? event.changedTouches[0] : event;
       const from = connectFrom.current;
       if (from && Math.hypot(point.clientX - from.x, point.clientY - from.y) < 6) return;
-      openMenu(point.clientX, point.clientY, state.fromNode.id, (state.fromHandle.id as "yes" | "no" | null) ?? undefined);
+      openMenu(point.clientX, point.clientY, state.fromNode.id, (state.fromHandle.id as "yes" | "no" | null) ?? undefined, 1, false, "cursor");
     },
     [openMenu],
   );
@@ -267,7 +281,7 @@ function Flow({ flowKey, viewports }: { flowKey: string; viewports: Map<string, 
     const player = project.entities.find((e) => e.isPlayer);
     const suggested = from ? nextSpeaker(project, canvas, from) : defaultNpc(project, canvas);
     // первым — тот, кто скорее всего говорит дальше; игрок отдельным пунктом
-    const npcs = project.entities.filter((e) => e.kind === "character" && !e.isPlayer);
+    const npcs = project.entities.filter((e) => !e.isPlayer);
     const npcFirst = npcs.some((e) => e.id === suggested)
       ? suggested
       : from?.type === "line" && npcs.some((e) => e.id === from.speaker)
@@ -302,6 +316,12 @@ function Flow({ flowKey, viewports }: { flowKey: string; viewports: Map<string, 
       editCanvas((canvas) => {
         if (item.type === "note") {
           newIds = [addNote(canvas, menu.at, root ?? canvas).id];
+          return;
+        }
+        if (menu.from && menu.placement === "cursor") {
+          const card = addCard(canvas, item.type ?? "line", menu.at, item.init, root ?? canvas);
+          connect(canvas, menu.from, card.id, menu.port);
+          newIds = [card.id];
           return;
         }
         if (menu.from) {
@@ -455,12 +475,12 @@ function Flow({ flowKey, viewports }: { flowKey: string; viewports: Map<string, 
           requestEdit(newId);
           const rootCanvas = useStore.getState().project?.canvases[activeCanvas];
           const at = rootCanvas && canvasAtPath(rootCanvas, path)?.layout[newId];
-          if (at) setCenter(at.x + (at.w ?? CARD_W) / 2, at.y + 60, { zoom: 1, duration: 200 });
+          if (at) setCenter(at.x + ("w" in at ? at.w ?? CARD_W : CARD_W) / 2, at.y + 60, { zoom: 1, duration: 200 });
         }
       }
       if ((e.ctrlKey || e.metaKey) && /^[1-9]$/.test(e.key)) {
         e.preventDefault();
-        const speaker = project.entities.filter((x) => x.kind === "character")[Number(e.key) - 1];
+        const speaker = project.entities[Number(e.key) - 1];
         if (speaker) editCanvas((canvas) => { for (const c of canvas.cards) if (c.type === "line" && selection.includes(c.id)) c.speaker = speaker.id; });
       }
     };
@@ -601,7 +621,10 @@ function Flow({ flowKey, viewports }: { flowKey: string; viewports: Map<string, 
         setPinEditor(null);
       }} /></div>}
       {cardMenu && canvas && <CreateMenu key={`card:${cardMenu.id}`} menu={{ x: cardMenu.x, y: cardMenu.y, at: { x: 0, y: 0 } }} items={[
-        { label: "Настройки карточки", icon: GitBranch, run: () => useStore.getState().openCardSettings(cardMenu.id) },
+        { label: "Дополнительная точка входа", icon: Flag, run: () => useStore.getState().openCardControl(cardMenu.id, "entry") },
+        ...(canvas.cards.some((c) => (selection.includes(cardMenu.id) ? selection.includes(c.id) : c.id === cardMenu.id) && c.type === "line") ? [{ label: "Спикер выбранных реплик", icon: User, run: () => useStore.getState().openCardControl(cardMenu.id, "speaker") }] : []),
+        ...(canvas.cards.some((c) => (selection.includes(cardMenu.id) ? selection.includes(c.id) : c.id === cardMenu.id) && isPlayerCard(project!, c)) ? [{ label: "Тип ответа выбранных реплик", icon: Repeat, run: () => useStore.getState().openCardControl(cardMenu.id, "repeat") }] : []),
+        ...(canvas.cards.find((c) => c.id === cardMenu.id)?.type === "jump" ? [{ label: "Действие перехода", icon: Code, run: () => onPin(cardMenu.id, "action", { x: cardMenu.x, y: cardMenu.y }) }] : []),
         ...(canvas.cards.find((c) => c.id === cardMenu.id)?.flow ? [{ label: "Открыть вложенность", icon: Layers, run: () => {
           if (key) useStore.getState().setActiveCanvas(key, [...flowPath, cardMenu.id]);
         } }] : []),

@@ -81,6 +81,7 @@ export interface Canvas {
   title: string;
   /** папка в списке файлов; на сборку не влияет */
   group?: string;
+  folderId?: string;
   /** id карточки, с которой начинается файл (узел ink) */
   start?: string;
   owner?: string;
@@ -98,7 +99,11 @@ export type EntityKind = "character" | "item" | "location" | "skill";
 
 export interface Entity {
   id: string;
+  /** Имя пространства переменных; старые проекты используют id. */
+  technicalName?: string;
+  /** Legacy classification; all entities can be speakers. */
   kind: EntityKind;
+  description?: string;
   name: string;
   /** имя спикера в строке ink: «ДЕКАН: текст» */
   inkName: string;
@@ -107,6 +112,7 @@ export interface Entity {
   isPlayer?: boolean;
   /** папка в списке персонажей */
   group?: string;
+  folderId?: string;
   props?: Record<string, string>;
 }
 
@@ -117,8 +123,9 @@ export interface Variable {
   type: VarType;
   default: number | boolean | string;
   group?: string;
+  folderId?: string;
   description?: string;
-  /** id персонажа; пусто — глобальная переменная */
+  /** стабильный id сущности или набора; пусто — глобальная переменная */
   owner?: string;
 }
 
@@ -127,6 +134,7 @@ export interface InkListDef {
   items: string[];
   initial: string[];
   group?: string;
+  folderId?: string;
   description?: string;
   owner?: string;
 }
@@ -138,6 +146,7 @@ export interface InkFunction {
   /** тело функции — ink как есть, обычно строки `~ ...` и `~ return ...` */
   body: string;
   group?: string;
+  folderId?: string;
   description?: string;
   /** id персонажа; пусто — глобальная функция */
   owner?: string;
@@ -145,13 +154,30 @@ export interface InkFunction {
   external?: boolean;
 }
 
+export interface VariableSet {
+  id: string;
+  name: string;
+  description?: string;
+}
+
 export interface Variables {
+  sets?: VariableSet[];
   vars: Variable[];
   lists: InkListDef[];
   functions: InkFunction[];
 }
 
+export type FolderSection = "files" | "entities" | "variables";
+export interface ProjectFolder {
+  id: string;
+  name: string;
+  section: FolderSection;
+  parent?: string;
+}
+
 export interface ProjectSettings {
+  folders?: ProjectFolder[];
+  formatVersion?: number;
   name: string;
   /** папка сборки относительно папки проекта */
   buildDir: string;

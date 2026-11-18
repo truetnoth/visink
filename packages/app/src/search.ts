@@ -1,8 +1,9 @@
+import { qualifiedName } from "@visink/core";
 // Общий поиск по проекту: файлы, карточки, стрелки, персонажи, переменные, списки.
 import type { Canvas, Project } from "@visink/core";
 import { flowCards } from "@visink/core";
 
-export type HitKind = "file" | "card" | "link" | "entity" | "var" | "list" | "func";
+export type HitKind = "scope" | "file" | "card" | "link" | "entity" | "var" | "list" | "func";
 
 export interface Hit {
   kind: HitKind;
@@ -21,10 +22,11 @@ export interface Hit {
 }
 
 export const HIT_GROUPS: { kind: HitKind; title: string }[] = [
+  { kind: "scope", title: "Наборы переменных" },
   { kind: "file", title: "Файлы" },
   { kind: "card", title: "Реплики и карточки" },
   { kind: "link", title: "Стрелки" },
-  { kind: "entity", title: "Персонажи" },
+  { kind: "entity", title: "Сущности" },
   { kind: "var", title: "Переменные" },
   { kind: "list", title: "Списки" },
   { kind: "func", title: "Функции" },
@@ -43,6 +45,7 @@ export function searchProject(project: Project, query: string): Map<HitKind, Hit
     if (list.length < LIMIT) list.push(hit);
   };
 
+  for (const set of project.variables.sets ?? []) if (has(set.name, set.description)) push({ kind: "scope", title: set.name, detail: set.description, id: set.id });
   const files = Object.entries(project.canvases).sort((a, b) => a[1].title.localeCompare(b[1].title));
   for (const [key, c] of files) {
     if (has(c.title, c.id)) push({ kind: "file", title: c.title, detail: c.id, key });
@@ -77,19 +80,19 @@ export function searchProject(project: Project, query: string): Map<HitKind, Hit
     visitLinks(c, []);
   }
   for (const e of project.entities) {
-    if (has(e.name, e.inkName, e.id)) push({ kind: "entity", title: e.name, detail: e.inkName || undefined, id: e.id });
+    if (has(e.description, e.name, e.inkName, e.id, e.technicalName)) push({ kind: "entity", title: e.name, detail: e.inkName || undefined, id: e.id });
   }
   const entityName = (id: string | undefined) => project.entities.find((e) => e.id === id)?.name;
   for (const v of project.variables.vars) {
-    const title = v.owner ? `${v.owner}.${v.name}` : v.name;
+    const title = qualifiedName(project, v);
     if (has(title, v.group, v.description, String(v.default), entityName(v.owner))) push({ kind: "var", title, detail: [v.type, String(v.default), v.group].filter(Boolean).join(" · "), id: v.name, owner: v.owner });
   }
   for (const l of project.variables.lists) {
-    const title = l.owner ? `${l.owner}.${l.name}` : l.name;
+    const title = qualifiedName(project, l);
     if (has(title, ...l.items, entityName(l.owner))) push({ kind: "list", title, detail: l.items.join(", "), id: l.name, owner: l.owner });
   }
   for (const f of project.variables.functions) {
-    const title = f.owner ? `${f.owner}.${f.name}` : f.name;
+    const title = qualifiedName(project, f);
     if (has(title, f.description, f.body, f.group, entityName(f.owner))) push({ kind: "func", title: `${title}(${f.params.join(", ")})`, detail: f.description || f.group, id: f.name, owner: f.owner });
   }
   return out;

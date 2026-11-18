@@ -1,3 +1,4 @@
+import { qualifiedName } from "@visink/core";
 import { Compiler, CompilerOptions, JsonFileHandler } from "inkjs/full";
 import type { Project } from "@visink/core";
 import { flowCards } from "@visink/core";
@@ -126,14 +127,14 @@ export function unknownIdentifiers(expr: string, project: Project, extra: string
   const known = new Set([...KNOWN, ...extra]);
   for (const item of [...project.variables.functions, ...project.variables.vars, ...project.variables.lists]) {
     if (item.owner) {
-      known.add(`${item.owner}.${item.name}`);
+      known.add(qualifiedName(project, item));
       if (item.owner === owner) known.add(item.name);
     } else known.add(item.name);
   }
   for (const l of project.variables.lists) {
     for (const i of l.items) {
       known.add(i);
-      known.add(`${l.owner ? `${l.owner}.` : ""}${l.name}.${i}`);
+      known.add(`${qualifiedName(project, l)}.${i}`);
     }
   }
   const canvasIds = new Set(Object.values(project.canvases).map((c) => c.id));

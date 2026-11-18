@@ -7,11 +7,9 @@ import { askUser } from "../tauriFs";
 import { renameVariable, variableUsages } from "../ops";
 import type { Usage } from "../ops";
 import { ExprField, Field, Select, Text } from "./fields";
-import { groupNames } from "./tree";
-import { Combobox } from "../ui";
 
 /** Имя переменной/списка: применяется по Enter или уходу из поля, с проверкой и переименованием во всём проекте. */
-function NameField({ name, project, onRename }: { name: string; project: Project; onRename: (to: string) => void }) {
+function NameField({ name, project, onRename, owner }: { name: string; project: Project; owner?: string; onRename: (to: string) => void }) {
   const [value, setValue] = useState(name);
   const [prev, setPrev] = useState(name);
   if (prev !== name) {
@@ -20,7 +18,7 @@ function NameField({ name, project, onRename }: { name: string; project: Project
   }
   const taken =
     value !== name &&
-    [...project.variables.vars.map((v) => v.name), ...project.variables.lists.map((l) => l.name), ...project.variables.functions.map((f) => f.name)].includes(value);
+    [...project.variables.vars, ...project.variables.lists, ...project.variables.functions].some((v) => v.owner === owner && v.name === value);
   const valid = isValidInkName(value) && !taken;
   const apply = () => {
     if (value === name) return;
@@ -30,9 +28,9 @@ function NameField({ name, project, onRename }: { name: string; project: Project
   return (
     <Field
       label="Имя"
-      hint={!isValidInkName(value) ? <span className="bad">только латиница, цифры и _</span> : taken ? <span className="bad">имя занято</span> : "переименование обновит все условия и действия"}
+      hint={!isValidInkName(value) ? <span className="bad">только латиница, цифры и _</span> : taken ? <span className="bad">имя занято</span> : ""}
     >
-      <input className="mono" spellCheck={false} autoCapitalize="off" autoCorrect="off" autoFocus={name.startsWith("new_") || name.startsWith("NewList")} value={value} onChange={(e) => setValue(e.target.value)} onBlur={apply} onKeyDown={(e) => e.key === "Enter" && apply()} />
+      <input aria-label="Имя" className="mono" spellCheck={false} autoCapitalize="off" autoCorrect="off" autoFocus={name.startsWith("new_") || name.startsWith("NewList")} value={value} onChange={(e) => setValue(e.target.value)} onBlur={apply} onKeyDown={(e) => e.key === "Enter" && apply()} />
     </Field>
   );
 }
@@ -45,7 +43,7 @@ function UsageList({ usages, project }: { usages: Usage[]; project: Project }) {
       {usages.map((u, i) => {
         if (u.func) {
           return (
-            <li key={i} onClick={() => inspectVariable("func", u.func!)}>
+            <li key={i} onClick={() => inspectVariable("func", u.func!, u.funcOwner)}>
               <span className="muted">функция ·</span>
               <span className="mono ellipsis">{u.func}()</span>
             </li>
@@ -64,15 +62,14 @@ function UsageList({ usages, project }: { usages: Usage[]; project: Project }) {
   );
 }
 
-export function VariableProps({ name, project }: { name: string; project: Project }) {
+export function VariableProps({ name, project, owner }: { name: string; project: Project; owner?: string }) {
   const { edit, inspectVariable } = useStore.getState();
-  const v = project.variables.vars.find((x) => x.name === name);
-  const usages = useMemo(() => variableUsages(project, name), [project, name]);
-  const groups = useMemo(() => groupNames(project.variables.vars), [project]);
+  const v = project.variables.vars.find((x) => x.name === name && x.owner === owner);
+  const usages = useMemo(() => variableUsages(project, name, owner), [project, name, owner]);
   if (!v) return null;
   const set = (fn: (x: VarDef) => void) =>
     edit((p) => {
-      const x = p.variables.vars.find((y) => y.name === name);
+      const x = p.variables.vars.find((y) => y.name === name && y.owner === owner);
       if (x) fn(x);
     });
   return (
@@ -82,10 +79,11 @@ export function VariableProps({ name, project }: { name: string; project: Projec
       </div>
       <NameField
         name={name}
+        owner={owner}
         project={project}
         onRename={(to) => {
-          edit((p) => renameVariable(p, name, to));
-          inspectVariable("var", to);
+          edit((p) => renameVariable(p, name, to, owner));
+          inspectVariable("var", to, owner);
         }}
       />
       <div className="row2">
@@ -116,9 +114,6 @@ export function VariableProps({ name, project }: { name: string; project: Projec
           )}
         </Field>
       </div>
-      <Field label="Группа" hint="для порядка в списке слева">
-        <Combobox value={v.group ?? ""} options={groups} placeholder="Сюжет, Отношения…" onChange={(g) => set((x) => (x.group = g || undefined))} />
-      </Field>
       <Field label={`Где используется (${usages.length})`}>
         <UsageList usages={usages} project={project} />
       </Field>
@@ -126,7 +121,7 @@ export function VariableProps({ name, project }: { name: string; project: Projec
         className="danger"
         onClick={async () => {
           if (usages.length && !(await askUser(`«${name}» используется в ${usages.length} местах — после удаления там будут ошибки. Удалить?`))) return;
-          edit((p) => (p.variables.vars = p.variables.vars.filter((x) => x.name !== name)));
+          edit((p) => (p.variables.vars = p.variables.vars.filter((x) => (x.name !== name || x.owner !== owner))));
           inspectVariable("var", null);
         }}
       >
@@ -136,16 +131,16 @@ export function VariableProps({ name, project }: { name: string; project: Projec
   );
 }
 
-export function FunctionProps({ name, project }: { name: string; project: Project }) {
+export function FunctionProps({ name, project, owner }: { name: string; project: Project; owner?: string }) {
   const check = useStore((s) => s.check);
   const { edit, inspectVariable } = useStore.getState();
-  const f = project.variables.functions.find((x) => x.name === name);
-  const usages = useMemo(() => variableUsages(project, name), [project, name]);
+  const f = project.variables.functions.find((x) => x.name === name && x.owner === owner);
+  const usages = useMemo(() => variableUsages(project, name, owner), [project, name, owner]);
   const [params, setParams] = useState(() => f?.params.join(", ") ?? "");
   if (!f) return null;
   const set = (fn: (x: InkFunction) => void) =>
     edit((p) => {
-      const x = p.variables.functions.find((y) => y.name === name);
+      const x = p.variables.functions.find((y) => y.name === name && y.owner === owner);
       if (x) fn(x);
     });
   const parsed = params.split(",").map((x) => x.trim()).filter(Boolean);
@@ -161,10 +156,11 @@ export function FunctionProps({ name, project }: { name: string; project: Projec
       ))}
       <NameField
         name={name}
+        owner={owner}
         project={project}
         onRename={(to) => {
-          edit((p) => renameVariable(p, name, to));
-          inspectVariable("func", to);
+          edit((p) => renameVariable(p, name, to, owner));
+          inspectVariable("func", to, owner);
         }}
       />
       <Field label="Параметры" hint={bad.length ? <span className="bad">неверные имена: {bad.join(", ")}</span> : "через запятую"}>
@@ -186,6 +182,7 @@ export function FunctionProps({ name, project }: { name: string; project: Projec
         onChange={(v) => set((x) => (x.body = v))}
         project={project}
         extra={f.params}
+        owner={owner}
       />
       <Field label={`Где используется (${usages.length})`}>
         <UsageList usages={usages} project={project} />
@@ -194,7 +191,7 @@ export function FunctionProps({ name, project }: { name: string; project: Projec
         className="danger"
         onClick={async () => {
           if (usages.length && !(await askUser(`«${name}» используется в ${usages.length} местах — после удаления там будут ошибки. Удалить?`))) return;
-          edit((p) => (p.variables.functions = p.variables.functions.filter((x) => x.name !== name)));
+          edit((p) => (p.variables.functions = p.variables.functions.filter((x) => (x.name !== name || x.owner !== owner))));
           inspectVariable("func", null);
         }}
       >
@@ -204,15 +201,15 @@ export function FunctionProps({ name, project }: { name: string; project: Projec
   );
 }
 
-export function ListProps({ name, project }: { name: string; project: Project }) {
+export function ListProps({ name, project, owner }: { name: string; project: Project; owner?: string }) {
   const { edit, inspectVariable } = useStore.getState();
-  const l = project.variables.lists.find((x) => x.name === name);
-  const usages = useMemo(() => variableUsages(project, name), [project, name]);
+  const l = project.variables.lists.find((x) => x.name === name && x.owner === owner);
+  const usages = useMemo(() => variableUsages(project, name, owner), [project, name, owner]);
   const [items, setItems] = useState(() => l?.items.join(", ") ?? "");
   if (!l) return null;
   const set = (fn: (x: InkListDef) => void) =>
     edit((p) => {
-      const x = p.variables.lists.find((y) => y.name === name);
+      const x = p.variables.lists.find((y) => y.name === name && y.owner === owner);
       if (x) fn(x);
     });
   const parsed = items.split(",").map((x) => x.trim()).filter(Boolean);
@@ -224,10 +221,11 @@ export function ListProps({ name, project }: { name: string; project: Project })
       </div>
       <NameField
         name={name}
+        owner={owner}
         project={project}
         onRename={(to) => {
-          edit((p) => renameVariable(p, name, to));
-          inspectVariable("list", to);
+          edit((p) => renameVariable(p, name, to, owner));
+          inspectVariable("list", to, owner);
         }}
       />
       <Field label="Элементы" hint={bad.length ? <span className="bad">неверные имена: {bad.join(", ")}</span> : "через запятую"}>
@@ -269,7 +267,7 @@ export function ListProps({ name, project }: { name: string; project: Project })
         className="danger"
         onClick={async () => {
           if (usages.length && !(await askUser(`«${name}» используется в ${usages.length} местах — после удаления там будут ошибки. Удалить?`))) return;
-          edit((p) => (p.variables.lists = p.variables.lists.filter((x) => x.name !== name)));
+          edit((p) => (p.variables.lists = p.variables.lists.filter((x) => (x.name !== name || x.owner !== owner))));
           inspectVariable("list", null);
         }}
       >

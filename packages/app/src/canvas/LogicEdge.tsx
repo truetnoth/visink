@@ -1,5 +1,5 @@
 // стрелка-связь: маршрут, подпись условия/действия, узел-заглушка для черновика связи
-import { memo } from "react";
+import { memo, useId } from "react";
 import type { Edge, EdgeProps } from "@xyflow/react";
 import { BaseEdge, EdgeLabelRenderer, Handle, Position, getBezierPath, useReactFlow } from "@xyflow/react";
 import { actionLines } from "@visink/compiler";
@@ -23,7 +23,7 @@ export function roundedRoute(points: { x: number; y: number }[], radius = 16) {
 
 /** Прямые связи остаются плавными; обратные и петли проходят большой дугой над карточками. */
 export const LogicEdge = memo(function LogicEdge(props: EdgeProps<Edge<EdgeData>>) {
-  const { id, data, selected, markerEnd, style, source, target, sourceX, sourceY, targetX, targetY } = props;
+  const { id, data, selected, style, source, target, sourceX, sourceY, targetX, targetY } = props;
   const { setNodes, setEdges, getNode } = useReactFlow();
   const select = (additive = false) => {
     if (data?.draft) return;
@@ -42,10 +42,13 @@ export const LogicEdge = memo(function LogicEdge(props: EdgeProps<Edge<EdgeData>
     x = (right + left) / 2;
     y = top;
   }
+  const marker = `arrow-${useId().replace(/:/g, "")}`;
+  const color = selected ? "var(--selection)" : "#fff";
   const cond = data?.condition?.trim();
   const action = actionLines(data?.action);
   return <>
-    <BaseEdge id={id} path={path} markerEnd={markerEnd} style={{ ...style, strokeWidth: selected ? 3 : 2.25, strokeOpacity: 1 }} interactionWidth={28} />
+    <defs><marker id={marker} viewBox="0 0 16 10" refX="15" refY="5" markerWidth="16" markerHeight="10" markerUnits="userSpaceOnUse" orient="auto"><path d="M0 0 L16 5 L0 10 L3 5 Z" fill={color} style={{ stroke: "none" }} /></marker></defs>
+    <BaseEdge id={id} path={path} markerEnd={`url(#${marker})`} style={{ ...style, strokeWidth: selected ? 3 : 2.25, strokeOpacity: 1 }} interactionWidth={28} />
     {(cond || action.length > 0) && <EdgeLabelRenderer><div className={`edge-logic nodrag nopan ${selected ? "selected" : ""} ${data?.error ? "error" : ""}`} style={{ transform: `translate(-50%, -50%) translate(${x}px, ${y}px)` }} onClick={(e) => select(e.shiftKey || e.metaKey || e.ctrlKey)} onDoubleClick={() => { select(); useStore.getState().openEditor(); setTimeout(() => (document.querySelector(".link-props input, .link-props textarea") as HTMLElement | null)?.focus(), 50); }}>
       {cond && <div className="edge-cond mono">{`{${cond}}`}</div>}{action.map((l, i) => <div key={i} className="edge-action mono">{l}</div>)}
     </div></EdgeLabelRenderer>}

@@ -2,6 +2,8 @@ import type { ProjectFs } from "./fs";
 import { stableStringify } from "./json";
 import type { Canvas, Card, CardType, Entity, Link, Project, Variables } from "./model";
 
+import { migrateFolders } from "./folders";
+
 const CANVAS_SUFFIX = ".canvas.json";
 
 export function createProject(name: string): Project {
@@ -187,6 +189,7 @@ function normalizeCanvas(raw: Partial<Canvas> & { cards?: LegacyCard[] }): Canva
   return {
     id: raw.id ?? "canvas",
     title: raw.title ?? raw.id ?? "",
+    ...(raw.folderId ? { folderId: raw.folderId } : {}),
     ...(raw.group ? { group: raw.group } : {}),
     ...(start ? { start } : {}),
     owner: raw.owner,
@@ -210,6 +213,7 @@ export async function loadProject(fs: ProjectFs): Promise<Project> {
   const settingsText = await fs.readText("project.json");
   if (settingsText == null) throw new Error("В папке нет project.json — это не проект Visink");
   const settings = JSON.parse(settingsText);
+  if ((settings.formatVersion ?? 1) > 3) throw new Error("Проект создан более новой версией VisInk");
   const entities: Entity[] = JSON.parse((await fs.readText("entities.json")) ?? "[]");
   const variables: Variables = JSON.parse((await fs.readText("variables.json")) ?? '{"vars":[],"lists":[]}');
   const canvases: Record<string, Canvas> = {};
@@ -218,20 +222,24 @@ export async function loadProject(fs: ProjectFs): Promise<Project> {
     const canvas = migrateFlowLogic(normalizeCanvas(JSON.parse((await fs.readText(file)) ?? "{}")), { entities });
     canvases[canvasPath(canvas)] = canvas;
   }
-  return {
+  const project: Project = {
     settings: { buildDir: "build/narrative", languages: ["ru"], ...settings },
-    entities,
-    variables: { vars: variables.vars ?? [], lists: variables.lists ?? [], functions: variables.functions ?? [] },
+    entities: entities.map((e) => ({ ...e, technicalName: e.technicalName ?? e.id })),
+    variables: { sets: variables.sets ?? [], vars: variables.vars ?? [], lists: variables.lists ?? [], functions: variables.functions ?? [] },
     canvases,
   };
+  migrateFolders(project);
+  return project;
 }
 
 /** Файлы проекта в виде «путь → содержимое». */
 export function serializeProject(project: Project): Map<string, string> {
+  project = structuredClone(project);
+  migrateFolders(project);
   const files = new Map<string, string>();
-  files.set("project.json", stableStringify(project.settings));
-  files.set("entities.json", stableStringify(project.entities));
-  files.set("variables.json", stableStringify(project.variables));
+  files.set("project.json", stableStringify({ ...project.settings, formatVersion: 3 }));
+  files.set("entities.json", stableStringify(project.entities.map((e) => ({ ...e, technicalName: e.technicalName ?? e.id }))));
+  files.set("variables.json", stableStringify({ ...project.variables, sets: project.variables.sets ?? [] }));
   for (const canvas of Object.values(project.canvases)) {
     files.set(`canvases/${canvasPath(canvas)}${CANVAS_SUFFIX}`, stableStringify(syncEntries(canvas)));
   }
@@ -243,6 +251,19 @@ export function serializeProject(project: Project): Map<string, string> {
  * Возвращает список записанных путей.
  */
 export async function saveProject(fs: ProjectFs, project: Project): Promise<string[]> {
+  const original = await fs.readText("project.json");
+  if (original && (JSON.parse(original).formatVersion ?? 1) < 3) {
+    const oldVersion = JSON.parse(original).formatVersion ?? 1;
+    const backup = oldVersion < 2 ? ".backups/pre-v2/" : ".backups/pre-v3/";
+    if (!(await fs.readText(backup + "complete.json"))) {
+      const paths = ["project.json", "entities.json", "variables.json", ...(await fs.listFiles("canvases"))];
+      for (const path of paths) {
+        const text = await fs.readText(path);
+        if (text !== null && await fs.readText(backup + path) === null) await fs.writeText(backup + path, text);
+      }
+      await fs.writeText(backup + "complete.json", JSON.stringify({ formatVersion: oldVersion }));
+    }
+  }
   return writeFiles(fs, "", serializeProject(project), "canvases", CANVAS_SUFFIX);
 }
 

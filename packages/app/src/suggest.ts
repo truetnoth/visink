@@ -1,3 +1,4 @@
+import { qualifiedName } from "@visink/core";
 // Подсказки при вводе ink-выражений: переменные, списки и их элементы, функции, файлы, встроенные функции ink.
 import type { Project } from "@visink/core";
 import { INK_BUILTINS } from "@visink/checker";
@@ -32,8 +33,8 @@ function call(name: string, params: string[] | null, kind: SuggestionKind, hint?
 /** Все возможные подсказки проекта. extra — локальные имена (параметры функции). */
 export function candidates(project: Project, extra: string[] = [], owner?: string): Suggestion[] {
   const out: Suggestion[] = [];
-  const name = (item: { name: string; owner?: string }) => item.owner ? `${item.owner}.${item.name}` : item.name;
-  const entityName = (id: string | undefined) => project.entities.find((e) => e.id === id)?.name;
+  const name = (item: { name: string; owner?: string }) => qualifiedName(project, item);
+  const entityName = (id: string | undefined) => project.entities.find((e) => e.id === id)?.name ?? project.variables.sets?.find((s) => s.id === id)?.name;
   for (const p of extra) out.push({ kind: "param", insert: p, label: p, hint: "параметр" });
   for (const v of project.variables.vars) {
     out.push({ kind: "var", insert: name(v), label: name(v), hint: `${entityName(v.owner) ?? "глобальная"} · ${v.type} = ${String(v.default)}` });

@@ -1,3 +1,4 @@
+import { namespaceName } from "@visink/core";
 // Операции правки проекта. Все мутируют черновик (копию), store сам делает копию и пишет историю.
 import type { Canvas, Card, CardType, Link, Note, Point, Project } from "@visink/core";
 import { canvasPath, createCanvas, createCard, flowCards, guessStart, isPlayerCard, linkId, newCardId, newNoteId, toInkName } from "@visink/core";
@@ -216,10 +217,10 @@ export function pasteFragment(project: Project, canvas: Canvas, fragment: Fragme
 
 /** Главный NPC холста: владелец, иначе первый персонаж не-игрок. */
 export function defaultNpc(project: Project, canvas: Canvas): string | undefined {
-  const owner = project.entities.find((e) => e.id === canvas.owner && e.kind === "character" && !e.isPlayer);
+  const owner = project.entities.find((e) => e.id === canvas.owner && !e.isPlayer);
   if (owner) return owner.id;
   const used = canvas.cards.find((c) => c.type === "line" && c.speaker && !isPlayerCard(project, c));
-  return used?.speaker ?? project.entities.find((e) => e.kind === "character" && !e.isPlayer)?.id;
+  return used?.speaker ?? project.entities.find((e) => !e.isPlayer)?.id;
 }
 
 function npcBefore(project: Project, canvas: Canvas, id: string, depth = 0): string | undefined {
@@ -377,7 +378,7 @@ function hasLocal(project: Project, owner: string | undefined, name: string): bo
 
 function usageMentions(project: Project, expr: string | undefined, name: string, owner?: string, functionOwner?: string, params: string[] = []): boolean {
   if (owner) {
-    return mentions(expr, `${owner}.${name}`) || (functionOwner === owner && !params.includes(name) && mentions(expr, name));
+    return mentions(expr, `${namespaceName(project, owner)}.${name}`) || (functionOwner === owner && !params.includes(name) && mentions(expr, name));
   }
   return !params.includes(name) && !hasLocal(project, functionOwner, name) && mentions(expr, name);
 }
@@ -391,13 +392,13 @@ export function variableUsages(project: Project, name: string, owner?: string): 
   }
   for (const [key, c] of Object.entries(project.canvases)) {
     for (const { canvas, card, path } of flowCards(c)) {
-      if (mentions(card.condition, owner ? `${owner}.${name}` : name) || mentions(card.action, owner ? `${owner}.${name}` : name) || (card.type === "ink" && mentions(card.text, owner ? `${owner}.${name}` : name))) {
+      if (mentions(card.condition, owner ? `${namespaceName(project, owner)}.${name}` : name) || mentions(card.action, owner ? `${namespaceName(project, owner)}.${name}` : name) || (card.type === "ink" && mentions(card.text, owner ? `${namespaceName(project, owner)}.${name}` : name))) {
         out.push({ key, path, card: card.id });
       }
     }
     const visitLinks = (flow: Canvas, path: string[]) => {
       for (const l of flow.links) {
-        if (mentions(l.condition, owner ? `${owner}.${name}` : name) || mentions(l.action, owner ? `${owner}.${name}` : name)) out.push({ key, path, link: { from: l.from, to: l.to, ...(l.port ? { port: l.port } : {}) } });
+        if (mentions(l.condition, owner ? `${namespaceName(project, owner)}.${name}` : name) || mentions(l.action, owner ? `${namespaceName(project, owner)}.${name}` : name)) out.push({ key, path, link: { from: l.from, to: l.to, ...(l.port ? { port: l.port } : {}) } });
       }
       for (const card of flow.cards) if (card.flow) visitLinks(card.flow, [...path, card.id]);
     };
@@ -418,7 +419,7 @@ export function renameVariable(project: Project, from: string, to: string, owner
   if (fn) fn.name = to;
   const renameExpr = (expr: string, localOwner?: string, params: string[] = []) => {
     if (owner) {
-      let out = replaceIdent(expr, `${owner}.${from}`, `${owner}.${to}`);
+      let out = replaceIdent(expr, `${namespaceName(project, owner)}.${from}`, `${namespaceName(project, owner)}.${to}`);
       if (localOwner === owner && !params.includes(from)) out = replaceIdent(out, from, to);
       return out;
     }

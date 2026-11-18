@@ -1,3 +1,6 @@
+import brandLogo from "./assets/visink-logo.png";
+import appPackage from "../package.json";
+import { draggedItems, endTreeDrag } from "./treeDrag";
 import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import type { CSSProperties } from "react";
 import { ChevronRight, CircleHelp, FilePlus, FolderOpen, GitBranch, Monitor, Moon, PanelLeft, Play, Redo2, Save, Settings as SettingsIcon, Sun, Undo2, Users, Variable, X } from "lucide-react";
@@ -40,21 +43,16 @@ function Status({ text }: { text: string }) {
   return <span className={`status ${shown ? "" : "faded"} ${isError(text) ? "bad" : ""}`} title={isError(text) ? "Щёлкните, чтобы скрыть" : text} onClick={() => setShown(false)}>{text}</span>;
 }
 
-const VIEWS = [
-  { id: "canvas", label: "Канвас", icon: GitBranch },
-  { id: "logic", label: "Логика", icon: Variable },
-  { id: "characters", label: "Персонажи", icon: Users },
-  { id: "testing", label: "Тестирование", icon: Play },
-] as const;
-
 function ViewSwitcher() {
   const view = useStore((s) => s.view);
   const project = useStore((s) => s.project);
   const key = useStore((s) => s.activeCanvas);
   const flowPath = useStore((s) => s.flowPath);
   const root = project && key ? project.canvases[key] : null;
+  const previousView = useRef<"canvas" | "logic" | "characters">("canvas");
+  if (view !== "testing") previousView.current = view;
   return <nav className="view-switcher" aria-label="Режим работы">
-    {VIEWS.map(({ id, label, icon: Icon }) => <button key={id} className={view === id ? "on" : ""} onClick={() => useStore.getState().setView(id)}><Icon size={15} />{label}</button>)}
+    <button className={`testing-toggle ${view === "testing" ? "on" : ""}`} aria-pressed={view === "testing"} onClick={() => useStore.getState().setView(view === "testing" ? previousView.current : "testing")}><Play size={15} />Тестирование</button>
     {view === "canvas" && root && <div className="flow-breadcrumbs" aria-label="Путь по вложенностям">
       <button className={!flowPath.length ? "on" : ""} title={root.title} onClick={() => key && useStore.getState().setActiveCanvas(key)}>{root.title}</button>
       {flowPath.map((id, i) => {
@@ -108,19 +106,19 @@ function Welcome({ onAbout }: { onAbout: () => void }) {
 function Settings({ onClose }: { onClose: () => void }) {
   const { cardFontSize, snap, autosaveSec, set } = usePrefs();
   return <div className="modal-backdrop" onMouseDown={onClose}><div className="modal settings" onMouseDown={(e) => e.stopPropagation()}><div className="modal-head"><div><h2>Настройки</h2><div className="muted">Хранятся на этом компьютере, в проект не попадают.</div></div><IconButton icon={X} label="Закрыть (Esc)" onClick={onClose} /></div>
-    <h3>Размер шрифта в карточках</h3><div className="row"><input type="range" min={FONT_MIN} max={FONT_MAX} step={1} value={cardFontSize} onChange={(e) => set({ cardFontSize: Number(e.target.value) })} /><span className="mono">{cardFontSize}px</span>{cardFontSize !== 12 && <button className="link" onClick={() => set({ cardFontSize: 12 })}>как было</button>}</div>
-    <h3>Холст</h3><label className="check"><input type="checkbox" checked={snap} onChange={(e) => set({ snap: e.target.checked })} />Привязывать карточки к сетке</label>
-    <h3>Автосохранение</h3><Select value={String(autosaveSec)} options={AUTOSAVE_OPTIONS.map((sec) => ({ value: String(sec), label: AUTOSAVE_LABEL[sec] }))} onChange={(value) => set({ autosaveSec: Number(value) as AutosaveSec })} />
-    <p className="muted">Сохраняет проект и собирает ink через заданное время после правки. Пишутся только изменившиеся файлы. При ошибках в проекте ink не пересобирается.</p>
+    <label className="setting-row"><span>Шрифт карточек</span><Select value={String(cardFontSize)} options={Array.from({ length: FONT_MAX - FONT_MIN + 1 }, (_, i) => ({ value: String(FONT_MIN + i), label: `${FONT_MIN + i} px` }))} onChange={(value) => set({ cardFontSize: Number(value) })} /></label>
+    <label className="check"><input type="checkbox" checked={snap} onChange={(e) => set({ snap: e.target.checked })} />Привязывать карточки к сетке</label>
+    <label className="setting-row"><span>Автосохранение</span><Select value={String(autosaveSec)} options={AUTOSAVE_OPTIONS.map((sec) => ({ value: String(sec), label: AUTOSAVE_LABEL[sec] }))} onChange={(value) => set({ autosaveSec: Number(value) as AutosaveSec })} /></label>
   </div></div>;
 }
 
 function About({ onClose }: { onClose: () => void }) {
-  return <div className="modal-backdrop" onMouseDown={onClose}><div className="modal" onMouseDown={(e) => e.stopPropagation()}><div className="modal-head"><Logo size={36} /><div><h2>Visink</h2><div className="muted">Визуальный редактор диалогов: карточки на холсте → обычные .ink-файлы для движка.</div></div><IconButton icon={X} label="Закрыть (Esc)" onClick={onClose} /></div>
-    <h3>Как игра запускает диалог</h3><p>Каждый файл — отдельный диалог. Игра вызывает <span className="mono">ChoosePathString("dean")</span> — диалог идёт с карточки-начала. Дополнительная точка входа задаётся в свойствах карточки. Функции «Реализует игра» привязываются через <span className="mono">BindExternalFunction</span>.</p>
+  return <div className="modal-backdrop" onMouseDown={onClose}><div className="modal" onMouseDown={(e) => e.stopPropagation()}><div className="modal-head"><div><h2>Visink {appPackage.version}</h2><div className="muted">Визуальный редактор диалогов: карточки на холсте → обычные .ink-файлы для движка.</div></div><IconButton icon={X} label="Закрыть (Esc)" onClick={onClose} /></div>
+    <img className="about-logo" src={brandLogo} alt="Visink" />
+    <h3>Как игра запускает диалог</h3><p>Каждый файл — отдельный диалог. Игра вызывает <span className="mono">ChoosePathString("dean")</span> — диалог идёт с карточки-начала. Дополнительная точка входа задаётся через правый клик по карточке. Функции «Реализует игра» привязываются через <span className="mono">BindExternalFunction</span>.</p>
     <h3>Горячие клавиши</h3><table className="keys"><tbody>
       <tr><td>Двойной щелчок по пустому месту</td><td>новая реплика</td></tr>
-      <tr><td>Двойной щелчок по шапке карточки</td><td>настройки карточки или выделенной группы</td></tr>
+      <tr><td>Имя спикера / тип ответа на карточке</td><td>изменить прямо на холсте</td></tr>
       <tr><td>Двойной щелчок по телу вложенности</td><td>открыть вложенный поток</td></tr>
       <tr><td>Щелчок по входу / двойной по выходу</td><td>компактное условие / действие</td></tr>
       <tr><td>Щелчок по правому пину</td><td>1–4 новые карточки через каскадное меню</td></tr>
@@ -151,6 +149,18 @@ export function App() {
   const [about, setAbout] = useState(false);
   const [settings, setSettings] = useState(false);
 
+  useEffect(() => {
+    // Native DnD defaults to copy outside registered drop targets on macOS.
+    // Set a forbidden baseline first; compatible child handlers override it.
+    const over = (e: DragEvent) => {
+      const p = useStore.getState().project;
+      if (p && e.dataTransfer && draggedItems(e.dataTransfer, p)) { e.preventDefault(); e.dataTransfer.dropEffect = "none"; }
+    };
+    document.addEventListener("dragover", over, true);
+    document.addEventListener("drop", endTreeDrag);
+    document.addEventListener("dragend", endTreeDrag);
+    return () => { document.removeEventListener("dragover", over, true); document.removeEventListener("drop", endTreeDrag); document.removeEventListener("dragend", endTreeDrag); };
+  }, []);
   useEffect(() => { void reopenLastProject(); }, []);
   // обновления — только в приложении, модуль подгружается отдельно
   useEffect(() => { if (inTauri) void import("./updater").then((m) => m.checkForUpdates()); }, []);

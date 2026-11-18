@@ -4,7 +4,7 @@ import { ArrowRightFromLine, Code, GitBranch, Layers, MessageSquare, Repeat } fr
 import type { Card, CardType, Entity } from "@visink/core";
 
 export type PinPoint = { x: number; y: number };
-export type CardData = { card: Card; speaker?: Entity; player: boolean; isStart: boolean; fixedHeight: boolean; problem?: "error" | "warning"; problemText?: string; problemCount?: number; onPin: (id: string, field: "condition" | "action", point: PinPoint) => void; onBranch: (id: string, port: "yes" | "no" | undefined, point: PinPoint) => void };
+export type CardData = { card: Card; targetLabel?: string; speaker?: Entity; player: boolean; isStart: boolean; fixedHeight: boolean; problem?: "error" | "warning"; problemText?: string; problemCount?: number; onPin: (id: string, field: "condition" | "action", point: PinPoint) => void; onBranch: (id: string, port: "yes" | "no" | undefined, point: PinPoint) => void };
 export type NoteData = { id: string; text: string };
 export type EdgeData = { condition?: string; action?: string; error?: boolean; draft?: boolean };
 export type DraftLink = { id: string; from: string; port?: "yes" | "no"; x: number; y: number };
@@ -36,9 +36,9 @@ export const TYPE_COLOR: Record<CardType, string> = {
   flow: "#7464a8",
   ink: "#56707a",
 };
-export const COMPACT_W: Partial<Record<CardType, number>> = { hub: 180, jump: 220 };
-/** Компактные карточки (хаб, переход): без тела и без запроса на ввод при создании. */
-export const isCompact = (type?: string) => type === "hub" || type === "jump";
+export const COMPACT_W: Partial<Record<CardType, number>> = { hub: 180 };
+/** Компактные карточки (хаб): без тела и без запроса на ввод при создании. */
+export const isCompact = (type?: string) => type === "hub";
 /** Порог «щелчок, а не протяжка» для выходного пина. */
 export const CLICK_MS = 240;
 

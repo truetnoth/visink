@@ -47,4 +47,3 @@ function build(d,parent){const isIcon=d.type==='svg'&&d.w<100&&d.h<100;const isB
 const root=register(figma.createFrame());page.appendChild(root);root.name=screenName;root.resize(data.w,data.h);root.x=200+(screenIndex%4)*1600;root.y=1100+Math.floor(screenIndex/4)*1080;root.fills=paint(data.tokens.bg);root.clipsContent=true;
 const content=raw(data.tree,root);content.x=0;content.y=0;
 return {createdNodeIds:ids,mutatedNodeIds:[shelf.id],rootId:root.id,name:root.name,components,warnings,nodeCount:ids.length};
-

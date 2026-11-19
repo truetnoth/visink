@@ -10,6 +10,7 @@ import { checkInBackground } from "./checkClient";
 import { BrowserFs, pickDirectory } from "./browserFs";
 import { TauriFs, askUser, inTauri, pickTauriDirectory } from "./tauriFs";
 import { usePrefs } from "./prefs";
+import { endTreeDrag, syncTreeDragProject } from "./treeDrag";
 
 /** Папка на диске: в браузере — File System Access, в приложении — команды Rust. */
 export type FolderFs = ProjectFs & { readonly name: string };
@@ -137,7 +138,9 @@ export const useStore = create<State>()(
         const project = get().project;
         if (!project) return;
         // фигурные скобки обязательны: immer бросает ошибку, если рецепт что-то вернёт
-        set({ project: produce(project, (draft) => { fn(draft); }) });
+        const next = produce(project, (draft) => { fn(draft); });
+        syncTreeDragProject(next);
+        set({ project: next });
       },
 
       editCanvas(fn) {
@@ -248,6 +251,7 @@ export const useStore = create<State>()(
             if (build) buildFs = new TauriFs(build);
           }
           loading = true;
+          endTreeDrag();
           set({
             project,
             fs,
@@ -279,6 +283,7 @@ export const useStore = create<State>()(
         project = structuredClone(project);
         migrateFolders(project);
         loading = true;
+        endTreeDrag();
         set({
           project,
           fs: null,

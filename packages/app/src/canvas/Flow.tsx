@@ -289,7 +289,7 @@ function Flow({ flowKey, viewports }: { flowKey: string; viewports: Map<string, 
         : defaultNpc(project, canvas);
     npcs.sort((a, b) => (a.id === npcFirst ? -1 : b.id === npcFirst ? 1 : 0));
     const lines: MenuItem[] = npcs.map((e) => ({ label: e.name, color: e.color, icon: MessageSquare, type: "line", init: { speaker: e.id } }));
-    const option: MenuItem[] = player ? [{ label: "Вариант игрока", color: player.color, icon: User, type: "line", init: { speaker: player.id } }] : [];
+    const option: MenuItem[] = player ? [{ label: "Вариант игрока", color: player.color, icon: User, type: "line", init: { speaker: player.id, repeat: "sticky" } }] : [];
     const items: MenuItem[] = [{ label: "Реплика NPC", icon: MessageSquare, color: project.entities.find((e) => e.id === suggested)?.color, children: lines }, ...option];
     items.push(
       { label: "Хаб", icon: Repeat, type: "hub" },
@@ -417,7 +417,7 @@ function Flow({ flowKey, viewports }: { flowKey: string; viewports: Map<string, 
           return;
         }
         if (type === "player") {
-          newId = addCard(canvas, "line", pos, { speaker: p.entities.find((e) => e.isPlayer)?.id }, rootCanvas).id;
+          newId = addCard(canvas, "line", pos, { speaker: p.entities.find((e) => e.isPlayer)?.id, repeat: "sticky" }, rootCanvas).id;
           return;
         }
         const init: Partial<Card> = type === "line" ? { speaker: defaultNpc(p, canvas) } : {};

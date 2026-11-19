@@ -26,6 +26,7 @@ export function treeDestination(node: TreeNode, cards = false): TreeDestination 
 export function beginTreeDrag(dt: DataTransfer, project: Project, items: TreeItem[]) {
   current = { project, items }; dt.setData(MIME, '1'); dt.effectAllowed = 'copyMove';
 }
+export function syncTreeDragProject(project: Project) { if (current) current.project = project; }
 export function endTreeDrag() { current = null; }
 export function draggedItems(dt: DataTransfer, project: Project): TreeItem[] | null {
   return current?.project === project && dt.types.includes(MIME) ? current.items : null;

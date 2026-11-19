@@ -17,6 +17,14 @@ describe("сборка демо-проекта", () => {
     for (const [file, text] of result.build.files) expect(text).toMatchSnapshot(file);
   });
 
+  it("сохраняет разную семантику явных once, sticky и fallback", () => {
+    const ink = result.build.files.get("advisor.ink")!;
+    expect(ink).toContain("* [Спросить про архив.] -> a3");
+    expect(ink).toContain("+ [Уйти.] -> a5");
+    expect(ink).toContain("* -> a12");
+    expect(ink.indexOf("* -> a12")).toBeGreaterThan(ink.indexOf("+ [Уйти.] -> a5"));
+  });
+
   it("проходится от точки входа", () => {
     const story = new Story(result.storyJson!);
     story.ChoosePathString("dean.entry_first_meeting");

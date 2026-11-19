@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { checkProject } from "@visink/checker";
 import { createCard, linkId } from "@visink/core";
 import { demoProject } from "../../checker/test/fixtures";
-import { addBranchCards, addCanvas, addNestedFlow, alignToGrid, connect, copyFragment, deleteCards, deleteLinks, jumpTargets, parseFragment, pasteFragment, renameVariable, replaceIdent, snapPoint, variableUsages } from "../src/ops";
+import { addBranchCards, addCanvas, addNestedFlow, addPlayerOption, alignToGrid, connect, copyFragment, deleteCards, deleteLinks, jumpTargets, parseFragment, pasteFragment, renameVariable, replaceIdent, snapPoint, variableUsages } from "../src/ops";
 import { searchProject } from "../src/search";
 
 describe("linkId", () => {
@@ -38,6 +38,16 @@ describe("связи условия", () => {
     expect(new Set(positions.map((point) => point.x)).size).toBe(1);
     expect(positions.map((point) => point.y)).toEqual([60, 260, 460, 660]);
     expect(positions.every((point) => point.x % 20 === 0 && point.y % 20 === 0)).toBe(true);
+  });
+});
+
+describe("варианты игрока", () => {
+  it("Tab создаёт повторяемый ответ и подключает его к выбранной реплике", () => {
+    const p = demoProject();
+    const c = p.canvases.advisor;
+    const card = addPlayerOption(p, c, "a1")!;
+    expect(card).toMatchObject({ speaker: "ent_player", repeat: "sticky" });
+    expect(c.links.some((link) => link.from === "a1" && link.to === card.id)).toBe(true);
   });
 });
 

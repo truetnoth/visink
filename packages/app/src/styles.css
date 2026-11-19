@@ -448,7 +448,7 @@ button.link:hover { color: var(--text); }
 .screen-section-head button { display: inline-flex; align-items: center; gap: 5px; }
 .screen-section-head button.danger { margin-top: 0; }
 .logic-workspace { min-width: 0; }
-.table-scroll { overflow-x: auto; border: 1px solid var(--border); border-radius: 7px; background: var(--panel); }
+.table-scroll { overflow-x: auto; border: 0; outline: 1px solid var(--border); border-radius: 7px; background: var(--panel); }
 .logic-table { border-collapse: collapse; width: 100%; min-width: 960px; }
 .logic-table th { padding: 7px 8px; text-align: left; color: var(--muted); font-size: 11px; text-transform: uppercase; background: var(--panel-2); }
 .logic-table td { padding: 6px 8px; border-top: 1px solid var(--border); vertical-align: middle; }
@@ -608,7 +608,7 @@ button.link:hover { color: var(--text); }
 .logic-table td:nth-child(3), .logic-table td:nth-child(4) { min-width: 0; }
 .logic-table input, .logic-table .select { min-width: 0; }
 .characters-screen .logic-table td > input:not([type="checkbox"]), .characters-screen .logic-table td > .select { height: 32px; padding: 5px 7px; }
-.column-resizer { position: absolute; top: 0; right: -3px; bottom: 0; width: 7px; cursor: col-resize; touch-action: none; z-index: 1; }
+.column-resizer { position: absolute; top: 0; right: 0; bottom: 0; width: 7px; cursor: col-resize; touch-action: none; z-index: 1; }
 .column-resizer:hover, .column-resizer:focus-visible { background: var(--accent); outline: none; }
 .column-resizer:active { background: var(--accent); }
 .logic-card:focus-within { border-color: var(--accent); }
@@ -635,7 +635,6 @@ button.link:hover { color: var(--text); }
 .card-head .card-inline-button:focus-visible, .card-inline-button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .card-avatar-frame { width: 66px; height: 66px; flex: none; }
 .card-avatar-frame .card-avatar { width: 100%; height: 100%; }
-.card .card-repeat { text-align: right; width: 100%; color: var(--muted); font-size: 11px; padding: 2px 4px; }
 .card-jump { border-radius: 5px; box-shadow: var(--card-shadow); }
 .card-jump .card-head { border-radius: 3px 3px 0 0; padding: 5px 8px; min-height: 28px; }
 .card-jump .card-body { padding: 10px; }

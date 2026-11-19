@@ -2,7 +2,7 @@
 import { memo, useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { Node, NodeProps } from "@xyflow/react";
 import { Handle, NodeResizer, Position, useUpdateNodeInternals } from "@xyflow/react";
-import { Flag, Layers, User } from "lucide-react";
+import { ArrowDownToLine, Flag, Layers, Repeat, Repeat1 } from "lucide-react";
 import { canvasAtPath, type Entity } from "@visink/core";
 import { actionLines } from "@visink/compiler";
 import { draggedItems, jumpDrop } from "../treeDrag";
@@ -12,7 +12,7 @@ import { usePortrait } from "../portraits";
 import { usePrefs } from "../prefs";
 import { CLICK_MS, COMPACT_W, isCompact, TYPE_COLOR, TYPE_ICON, TYPE_LABEL } from "./constants";
 import type { CardData, PinPoint } from "./constants";
-import { CardControl, REPEAT_OPTIONS } from "./CardControl";
+import { CardControl } from "./CardControl";
 import { InlineText } from "./InlineText";
 
 /** Аватарка спикера: портрет, если есть, иначе квадрат его цвета. */
@@ -32,13 +32,14 @@ export const CardNode = memo(function CardNode({ id, data, selected, width, heig
   const updateNodeInternals = useUpdateNodeInternals();
   const anchor = useRef<HTMLDivElement>(null);
   const control = useStore((s) => s.cardControl?.card === card.id ? s.cardControl : null);
-  const openControl = (field: "repeat" | "entry" | "target") => useStore.getState().openCardControl(card.id, field);
+  const openControl = (field: "entry" | "target") => useStore.getState().openCardControl(card.id, field);
   const [hovered, setHovered] = useState(false);
   const [resizing, setResizing] = useState(false);
   const pinTimer = useRef<number | undefined>(undefined);
   const multi = useStore((s) => selected && s.selection.length > 1);
   const color = card.type === "line" ? speaker?.color ?? "var(--service)" : TYPE_COLOR[card.type];
-  const Icon = player ? User : TYPE_ICON[card.type];
+  const Icon = TYPE_ICON[card.type];
+  const RepeatIcon = card.repeat === "sticky" ? Repeat : Repeat1;
   const action = actionLines(card.action);
   const gate = card.type !== "condition" ? card.condition?.trim() : "";
   const outPin = card.type === "line" || card.type === "hub" || card.type === "flow" || card.type === "ink";
@@ -74,13 +75,13 @@ export const CardNode = memo(function CardNode({ id, data, selected, width, heig
       onDragOver={(e) => {
         if (!project || !draggedItems(e.dataTransfer, project)) return;
         e.preventDefault(); e.stopPropagation();
-        e.dataTransfer.dropEffect = card.type === "jump" && !card.target && jumpDrop(e.dataTransfer, project) ? "copy" : "none";
+        e.dataTransfer.dropEffect = card.type === "jump" && jumpDrop(e.dataTransfer, project) ? "copy" : "none";
       }} onDrop={(e) => {
         if (!project || !draggedItems(e.dataTransfer, project)) return;
         e.preventDefault(); e.stopPropagation();
-        const target = jumpDrop(e.dataTransfer, project); if (card.type !== "jump" || !target || card.target) return;
+        const target = jumpDrop(e.dataTransfer, project); if (card.type !== "jump" || !target) return;
         const { activeCanvas, flowPath } = useStore.getState(); if (!activeCanvas) return;
-        editAtomic((p) => { const c = canvasAtPath(p.canvases[activeCanvas], flowPath)?.cards.find((c) => c.id === card.id); if (c && !c.target) c.target = target; });
+        editAtomic((p) => { const c = canvasAtPath(p.canvases[activeCanvas], flowPath)?.cards.find((c) => c.id === card.id); if (c) c.target = target; });
       }}>
       {!compact && <NodeResizer
         isVisible={selected || hovered || resizing}
@@ -102,11 +103,13 @@ export const CardNode = memo(function CardNode({ id, data, selected, width, heig
         {card.flow && card.type !== "flow" && <span className="chip nested-chip" title="Двойной щелчок по телу — открыть вложенный поток"><Layers size={11} /></span>}
         {card.entry && <button className="chip nodrag" title="Дополнительная точка входа" aria-label="Дополнительная точка входа" onClick={(e) => { e.stopPropagation(); openControl("entry"); }}>▶</button>}
         {card.type === "jump" && action.length > 0 && <span className="chip mono" title={action.join("\n")}>~</span>}
-        <Icon size={14} className="card-icon" />
+        {player ? card.repeat === "fallback" ? <span className="card-icon" role="img" aria-label="Запасной ответ" title="Запасной ответ"><ArrowDownToLine size={14} /></span> : <button className="card-icon card-inline-button nodrag nopan" aria-label={card.repeat === "sticky" ? "Повторяемый ответ — сделать одноразовым" : "Одноразовый ответ — сделать повторяемым"} title={card.repeat === "sticky" ? "Повторяемый ответ — сделать одноразовым" : "Одноразовый ответ — сделать повторяемым"} aria-pressed={card.repeat === "sticky"} onClick={(e) => {
+          e.stopPropagation();
+          editCanvas((canvas) => { const target = canvas.cards.find((c) => c.id === card.id); if (target?.type === "line" && target.repeat !== "fallback") target.repeat = target.repeat === "sticky" ? "once" : "sticky"; });
+        }}><RepeatIcon size={14} /></button> : <Icon size={14} className="card-icon" />}
       </div>
       {compact ? null : card.type === "line" ? <div className={`card-body line-body ${multi ? "" : "nodrag"}`}>
         <div className="card-top"><div className="card-avatar-frame"><Avatar speaker={speaker} /></div><div className={`card-cell ${player ? "" : "unused"}`} title={player ? undefined : "У реплик NPC текст на кнопке не используется"}><InlineText card={card} field="menuText" locked={multi} autoEdit={player} placeholder="текст меню" /></div></div>
-        {player && <button className="card-repeat card-inline-button nodrag nopan" title="Тип ответа" onClick={(e) => { e.stopPropagation(); openControl("repeat"); }}>{REPEAT_OPTIONS.find((o) => o.value === (card.repeat ?? "once"))?.label}</button>}
         <div className="card-cell"><InlineText card={card} field="stageDirection" locked={multi} placeholder="ремарка" /></div>
         <div className={`card-cell grow ${card.text ? "has-text" : ""}`}><InlineText card={card} field="text" locked={multi} autoEdit={!player} placeholder="" /></div>
       </div> : <div className={`card-body ${multi ? "" : "nodrag"}`}>

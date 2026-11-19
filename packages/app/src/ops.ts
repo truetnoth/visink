@@ -269,7 +269,7 @@ export function addPlayerOption(project: Project, canvas: Canvas, selectedId: st
   const options = canvas.links.filter((l) => l.from === parentId).map((l) => canvas.layout[l.to]).filter(Boolean);
   const parentAt = canvas.layout[parentId] ?? { x: 0, y: 0 };
   const y = options.length ? Math.max(...options.map((p) => p.y)) + ROW : parentAt.y;
-  const card = addCard(canvas, "line", { x: parentAt.x + (parentAt.w ?? CARD_W) + GAP, y }, { speaker: player.id }, root);
+  const card = addCard(canvas, "line", { x: parentAt.x + (parentAt.w ?? CARD_W) + GAP, y }, { speaker: player.id, repeat: "sticky" }, root);
   connect(canvas, parentId, card.id);
   return card;
 }

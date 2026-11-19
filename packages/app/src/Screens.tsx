@@ -81,7 +81,7 @@ function VariablesTable({ project, owner }: { project: Project; owner?: string }
     <section className="logic-section">
       <div className="screen-section-head">
         <h3>Переменные <span className="muted">{vars.length}</span></h3>
-        <button onClick={add}><Plus size={14} /> Переменная</button><button className="link" onClick={columns.reset}>Сбросить ширины</button>
+        <button onClick={add}><Plus size={14} /> Переменная</button>
         {checked.size > 0 && <button className="danger" onClick={() => remove(vars.filter((v) => checked.has(logicalName(v))))}><Trash2 size={14} /> Удалить выбранные ({checked.size})</button>}
       </div>
       {error && <div className="bad" role="alert">{error}</div>}

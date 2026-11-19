@@ -439,7 +439,7 @@ function Flow({ flowKey, viewports }: { flowKey: string; viewports: Map<string, 
     [createAt, screenToFlowPosition],
   );
 
-  // Enter / Tab / Ctrl+1…9 на выделенной карточке
+  // Enter / Tab на выделенной карточке
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (useStore.getState().view !== "canvas" || isTyping()) return;
@@ -477,11 +477,6 @@ function Flow({ flowKey, viewports }: { flowKey: string; viewports: Map<string, 
           const at = rootCanvas && canvasAtPath(rootCanvas, path)?.layout[newId];
           if (at) setCenter(at.x + ("w" in at ? at.w ?? CARD_W : CARD_W) / 2, at.y + 60, { zoom: 1, duration: 200 });
         }
-      }
-      if ((e.ctrlKey || e.metaKey) && /^[1-9]$/.test(e.key)) {
-        e.preventDefault();
-        const speaker = project.entities[Number(e.key) - 1];
-        if (speaker) editCanvas((canvas) => { for (const c of canvas.cards) if (c.type === "line" && selection.includes(c.id)) c.speaker = speaker.id; });
       }
     };
     window.addEventListener("keydown", onKey);
@@ -622,7 +617,6 @@ function Flow({ flowKey, viewports }: { flowKey: string; viewports: Map<string, 
       }} /></div>}
       {cardMenu && canvas && <CreateMenu key={`card:${cardMenu.id}`} menu={{ x: cardMenu.x, y: cardMenu.y, at: { x: 0, y: 0 } }} items={[
         { label: "Дополнительная точка входа", icon: Flag, run: () => useStore.getState().openCardControl(cardMenu.id, "entry") },
-        ...(canvas.cards.some((c) => (selection.includes(cardMenu.id) ? selection.includes(c.id) : c.id === cardMenu.id) && c.type === "line") ? [{ label: "Спикер выбранных реплик", icon: User, run: () => useStore.getState().openCardControl(cardMenu.id, "speaker") }] : []),
         ...(canvas.cards.some((c) => (selection.includes(cardMenu.id) ? selection.includes(c.id) : c.id === cardMenu.id) && isPlayerCard(project!, c)) ? [{ label: "Тип ответа выбранных реплик", icon: Repeat, run: () => useStore.getState().openCardControl(cardMenu.id, "repeat") }] : []),
         ...(canvas.cards.find((c) => c.id === cardMenu.id)?.type === "jump" ? [{ label: "Действие перехода", icon: Code, run: () => onPin(cardMenu.id, "action", { x: cardMenu.x, y: cardMenu.y }) }] : []),
         ...(canvas.cards.find((c) => c.id === cardMenu.id)?.flow ? [{ label: "Открыть вложенность", icon: Layers, run: () => {

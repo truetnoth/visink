@@ -32,7 +32,7 @@ export const CardNode = memo(function CardNode({ id, data, selected, width, heig
   const updateNodeInternals = useUpdateNodeInternals();
   const anchor = useRef<HTMLDivElement>(null);
   const control = useStore((s) => s.cardControl?.card === card.id ? s.cardControl : null);
-  const openControl = (field: "speaker" | "repeat" | "entry" | "target") => useStore.getState().openCardControl(card.id, field);
+  const openControl = (field: "repeat" | "entry" | "target") => useStore.getState().openCardControl(card.id, field);
   const [hovered, setHovered] = useState(false);
   const [resizing, setResizing] = useState(false);
   const pinTimer = useRef<number | undefined>(undefined);
@@ -98,14 +98,14 @@ export const CardNode = memo(function CardNode({ id, data, selected, width, heig
       {problem && <span className={`problem-badge ${problem}`} title={problemText}>!{problemCount && problemCount > 1 ? problemCount : ""}</span>}
       <div className="card-head" title={headLabel} onDoubleClick={(e) => e.stopPropagation()}>
         {isStart && <span className="chip" title="Начало файла"><Flag size={11} /></span>}
-        {card.type === "line" ? <button className="card-type card-inline-button nodrag nopan" title="Выбрать спикера" onClick={(e) => { e.stopPropagation(); openControl("speaker"); }}>{headLabel}</button> : card.type === "hub" ? <div className="card-type nodrag"><InlineText card={card} field="text" locked={multi} placeholder="Название хаба" /></div> : <span className="card-type">{card.type === "jump" ? "Переход к:" : headLabel}</span>}
+        {card.type === "line" ? <span className="card-type">{headLabel}</span> : card.type === "hub" ? <div className="card-type nodrag"><InlineText card={card} field="text" locked={multi} placeholder="Название хаба" /></div> : <span className="card-type">{card.type === "jump" ? "Переход к:" : headLabel}</span>}
         {card.flow && card.type !== "flow" && <span className="chip nested-chip" title="Двойной щелчок по телу — открыть вложенный поток"><Layers size={11} /></span>}
         {card.entry && <button className="chip nodrag" title="Дополнительная точка входа" aria-label="Дополнительная точка входа" onClick={(e) => { e.stopPropagation(); openControl("entry"); }}>▶</button>}
         {card.type === "jump" && action.length > 0 && <span className="chip mono" title={action.join("\n")}>~</span>}
         <Icon size={14} className="card-icon" />
       </div>
       {compact ? null : card.type === "line" ? <div className={`card-body line-body ${multi ? "" : "nodrag"}`}>
-        <div className="card-top"><button className="card-avatar-button nodrag nopan" aria-label="Выбрать спикера" onClick={(e) => { e.stopPropagation(); openControl("speaker"); }}><Avatar speaker={speaker} /></button><div className={`card-cell ${player ? "" : "unused"}`} title={player ? undefined : "У реплик NPC текст на кнопке не используется"}><InlineText card={card} field="menuText" locked={multi} autoEdit={player} placeholder="текст меню" /></div></div>
+        <div className="card-top"><div className="card-avatar-frame"><Avatar speaker={speaker} /></div><div className={`card-cell ${player ? "" : "unused"}`} title={player ? undefined : "У реплик NPC текст на кнопке не используется"}><InlineText card={card} field="menuText" locked={multi} autoEdit={player} placeholder="текст меню" /></div></div>
         {player && <button className="card-repeat card-inline-button nodrag nopan" title="Тип ответа" onClick={(e) => { e.stopPropagation(); openControl("repeat"); }}>{REPEAT_OPTIONS.find((o) => o.value === (card.repeat ?? "once"))?.label}</button>}
         <div className="card-cell"><InlineText card={card} field="stageDirection" locked={multi} placeholder="ремарка" /></div>
         <div className={`card-cell grow ${card.text ? "has-text" : ""}`}><InlineText card={card} field="text" locked={multi} autoEdit={!player} placeholder="" /></div>

@@ -9,10 +9,10 @@ describe("store", () => {
   });
 
   it("редактор карточки сохраняет групповое выделение, не открывая модалку", () => {
-    useStore.getState().openCardControl("a3", "speaker");
+    useStore.getState().openCardControl("a3", "entry");
     expect(useStore.getState().selection).toEqual(["a3"]);
     expect(useStore.getState().editorOpen).toBe(false);
-    expect(useStore.getState().cardControl?.field).toBe("speaker");
+    expect(useStore.getState().cardControl?.field).toBe("entry");
     useStore.getState().setSelection(["a3", "a4"]);
     useStore.getState().openCardControl("a4", "repeat");
     expect(useStore.getState().selection).toEqual(["a3", "a4"]);

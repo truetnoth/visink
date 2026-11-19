@@ -619,8 +619,9 @@ button.link:hover { color: var(--text); }
 .entity-intro { display: grid; grid-template-columns: 100px minmax(0, 1fr); gap: 12px; margin-bottom: 12px; }
 .entity-intro .portrait-preview { width: 100px; height: 100px; background: var(--panel-2); display: grid; place-items: center; }
 .entity-intro textarea { min-height: 100px; }
-.entity-fields { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 8px 12px; }
+.entity-fields { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); align-items: start; gap: 8px 12px; }
 .entity-fields .field { margin: 0; }
+.entity-fields input { height: 32px; padding: 5px 7px; }
 .entity-props > .check { margin: 12px 0 6px; }
 .entity-props > .pad { padding: 4px 0; }
 .entity-props > .danger { margin-top: 4px; }
@@ -631,8 +632,8 @@ button.link:hover { color: var(--text); }
 .card-inline-button:hover { background: #0001; }
 .card-head .card-inline-button { font-weight: inherit; }
 .card-head .card-inline-button:focus-visible, .card-inline-button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-.card-avatar-button { border: 0; border-radius: 3px; background: none; padding: 0; width: 66px; height: 66px; flex: none; }
-.card-avatar-button .card-avatar { width: 100%; height: 100%; }
+.card-avatar-frame { width: 66px; height: 66px; flex: none; }
+.card-avatar-frame .card-avatar { width: 100%; height: 100%; }
 .card .card-repeat { text-align: right; width: 100%; color: var(--muted); font-size: 11px; padding: 2px 4px; }
 .card-jump { border-radius: 5px; box-shadow: var(--card-shadow); }
 .card-jump .card-head { border-radius: 3px 3px 0 0; padding: 5px 8px; min-height: 28px; }

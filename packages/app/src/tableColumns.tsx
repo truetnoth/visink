@@ -23,5 +23,5 @@ export function useTableColumns(scope: "entity" | "global") {
     onPointerCancel={() => { drag.current = null; }} onLostPointerCapture={() => { drag.current = null; }}
     onDoubleClick={() => resize(index, INITIAL[index])}
     onKeyDown={(e) => { if (e.key === "ArrowLeft" || e.key === "ArrowRight") { e.preventDefault(); resize(index, widths[index] + (e.key === "ArrowLeft" ? -10 : 10)); } if (e.key === "Home") { e.preventDefault(); resize(index, INITIAL[index]); } }} />;
-  return { widths, handle, reset: () => setWidths([...INITIAL]), total: widths.reduce((a, b) => a + b, 0) };
+  return { widths, handle, total: widths.reduce((a, b) => a + b, 0) };
 }

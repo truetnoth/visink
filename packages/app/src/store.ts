@@ -448,6 +448,7 @@ export function undo() {
   useStore.temporal.getState().undo();
   const project = useStore.getState().project;
   if (project) syncTreeDragProject(project);
+  else endTreeDrag();
 }
 
 export function redo() {
@@ -455,6 +456,7 @@ export function redo() {
   useStore.temporal.getState().redo();
   const project = useStore.getState().project;
   if (project) syncTreeDragProject(project);
+  else endTreeDrag();
 }
 
 /** Приложение: при запуске открыть последний проект. */

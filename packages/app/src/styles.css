@@ -607,6 +607,7 @@ button.link:hover { color: var(--text); }
 .logic-table td { padding: 5px 4px; overflow: hidden; }
 .logic-table td:nth-child(3), .logic-table td:nth-child(4) { min-width: 0; }
 .logic-table input, .logic-table .select { min-width: 0; }
+.characters-screen .logic-table td > input:not([type="checkbox"]), .characters-screen .logic-table td > .select { height: 32px; padding: 5px 7px; }
 .column-resizer { position: absolute; top: 0; right: -3px; bottom: 0; width: 7px; cursor: col-resize; touch-action: none; z-index: 1; }
 .column-resizer:hover, .column-resizer:focus-visible { background: var(--accent); outline: none; }
 .column-resizer:active { background: var(--accent); }

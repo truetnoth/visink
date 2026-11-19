@@ -446,11 +446,15 @@ usePrefs.subscribe((s, prev) => {
 export function undo() {
   flushHistory?.();
   useStore.temporal.getState().undo();
+  const project = useStore.getState().project;
+  if (project) syncTreeDragProject(project);
 }
 
 export function redo() {
   flushHistory?.();
   useStore.temporal.getState().redo();
+  const project = useStore.getState().project;
+  if (project) syncTreeDragProject(project);
 }
 
 /** Приложение: при запуске открыть последний проект. */

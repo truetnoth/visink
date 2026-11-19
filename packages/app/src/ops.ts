@@ -255,6 +255,7 @@ export function addNextLine(project: Project, canvas: Canvas, fromId: string, ro
   const at = canvas.layout[fromId] ?? { x: 0, y: 0 };
   const siblings = canvas.links.filter((l) => l.from === fromId).length;
   const card = addCard(canvas, "line", { x: at.x + (at.w ?? CARD_W) + GAP, y: at.y + siblings * ROW }, { speaker: nextSpeaker(project, canvas, from) }, root);
+  if (isPlayerCard(project, card)) card.repeat = "sticky";
   connect(canvas, fromId, card.id);
   return card;
 }

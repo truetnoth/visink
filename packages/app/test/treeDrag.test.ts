@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { demoProject } from "../../checker/test/fixtures";
 import { beginTreeDrag, draggedItems, endTreeDrag, jumpDrop } from "../src/treeDrag";
-import { useStore } from "../src/store";
+import { editAtomic, redo, undo, useStore } from "../src/store";
 
 function dataTransfer(): DataTransfer {
   const types: string[] = [];
@@ -24,6 +24,23 @@ describe("перетаскивание цели перехода из дерев
     endTreeDrag();
     expect(draggedItems(dt, updated)).toBeNull();
     expect(jumpDrop(dt, updated)).toBeNull();
+  });
+
+  it("сохраняет drag после undo/redo и продолжает отклонять другой project", () => {
+    useStore.getState().openInMemory(demoProject());
+    useStore.getState().edit((project) => { project.settings.name = "До изменения"; });
+    editAtomic((project) => { project.settings.name = "После изменения"; });
+    const dt = dataTransfer();
+    beginTreeDrag(dt, useStore.getState().project!, [{ kind: "file", id: "dean" }]);
+
+    undo();
+    expect(useStore.getState().project!.settings.name).toBe("До изменения");
+    expect(jumpDrop(dt, useStore.getState().project!)).toBe("dean");
+
+    redo();
+    expect(useStore.getState().project!.settings.name).toBe("После изменения");
+    expect(jumpDrop(dt, useStore.getState().project!)).toBe("dean");
+    expect(jumpDrop(dt, demoProject())).toBeNull();
   });
 
   it("сбрасывает drag при открытии другого проекта", () => {

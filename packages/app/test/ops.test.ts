@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { checkProject } from "@visink/checker";
 import { createCard, linkId } from "@visink/core";
 import { demoProject } from "../../checker/test/fixtures";
-import { addBranchCards, addCanvas, addNestedFlow, addPlayerOption, alignToGrid, connect, copyFragment, deleteCards, deleteLinks, jumpTargets, parseFragment, pasteFragment, renameVariable, replaceIdent, snapPoint, variableUsages } from "../src/ops";
+import { addBranchCards, addCanvas, addNestedFlow, addNextLine, addPlayerOption, alignToGrid, connect, copyFragment, deleteCards, deleteLinks, jumpTargets, parseFragment, pasteFragment, renameVariable, replaceIdent, snapPoint, variableUsages } from "../src/ops";
 import { searchProject } from "../src/search";
 
 describe("linkId", () => {
@@ -48,6 +48,17 @@ describe("варианты игрока", () => {
     const card = addPlayerOption(p, c, "a1")!;
     expect(card).toMatchObject({ speaker: "ent_player", repeat: "sticky" });
     expect(c.links.some((link) => link.from === "a1" && link.to === card.id)).toBe(true);
+  });
+
+  it("Enter создаёт sticky при возврате к игроку и не меняет поведение NPC", () => {
+    const p = demoProject();
+    const c = p.canvases.advisor;
+    const player = addNextLine(p, c, "a6")!;
+    expect(player).toMatchObject({ speaker: "ent_player", repeat: "sticky" });
+    const npc = addNextLine(p, c, "a1")!;
+    expect(npc).toMatchObject({ speaker: "ent_advisor", repeat: "once" });
+    expect(c.cards.find((card) => card.id === "a3")!.repeat).toBe("once");
+    expect(c.cards.find((card) => card.id === "a12")!.repeat).toBe("fallback");
   });
 });
 

@@ -185,6 +185,15 @@ describe("копировать и вставить", () => {
     expect(p.canvases.advisor.cards.find((c) => c.id === id)!.speaker).not.toBe("ent_ghost");
   });
 
+  it("сохраняет ручные размеры заметки при вставке", () => {
+    const p = demoProject();
+    const dean = p.canvases.dean;
+    dean.notes.push({ id: "note_sized", text: "Размеры", x: 40, y: 60, w: 320, h: 180 });
+    const fragment = copyFragment(dean, ["note_sized"])!;
+    const [id] = pasteFragment(p, dean, fragment, { x: 500, y: 300 });
+    expect(dean.notes.find((note) => note.id === id)).toMatchObject({ w: 320, h: 180, x: 500, y: 300 });
+  });
+
   it("чужой текст — не кусок холста", () => {
     expect(parseFragment("просто текст")).toBeNull();
     expect(parseFragment('{"a":1}')).toBeNull();

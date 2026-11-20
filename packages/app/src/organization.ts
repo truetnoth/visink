@@ -25,9 +25,41 @@ export function renameFolder(p: Project, id: string, name: string) {
   if (p.settings.folders?.some((other) => other.id !== id && other.section === f.section && other.parent === f.parent && other.name === name)) throw new Error('Папка с таким названием уже существует');
   f.name = name;
 }
-export function deleteEmptyFolder(p: Project, id: string) {
-  if (p.settings.folders?.some((f) => f.parent === id) || [...Object.values(p.canvases), ...p.entities, ...p.variables.vars, ...p.variables.functions, ...p.variables.lists].some((v) => v.folderId === id)) throw new Error('Удалить можно только пустую папку');
-  p.settings.folders = p.settings.folders?.filter((f) => f.id !== id);
+function deleteOwnedMembers(p: Project, owners: Set<string>) {
+  p.variables.vars = p.variables.vars.filter((v) => !v.owner || !owners.has(v.owner));
+  p.variables.lists = p.variables.lists.filter((v) => !v.owner || !owners.has(v.owner));
+  p.variables.functions = p.variables.functions.filter((v) => !v.owner || !owners.has(v.owner));
+}
+
+export function deleteEntity(p: Project, id: string) {
+  p.entities = p.entities.filter((entity) => entity.id !== id);
+  deleteOwnedMembers(p, new Set([id]));
+}
+
+export function deleteVariableSet(p: Project, id: string) {
+  p.variables.sets = p.variables.sets?.filter((set) => set.id !== id);
+  deleteOwnedMembers(p, new Set([id]));
+}
+
+export function deleteFolder(p: Project, id: string) {
+  const folders = p.settings.folders ?? [];
+  const folder = folders.find((f) => f.id === id);
+  if (!folder) return;
+  const removed = new Set<string>();
+  const collect = (parent: string) => {
+    if (removed.has(parent)) return;
+    removed.add(parent);
+    folders.filter((f) => f.parent === parent).forEach((f) => collect(f.id));
+  };
+  collect(id);
+  if (folder.section === 'files') for (const [key, canvas] of Object.entries(p.canvases)) if (canvas.folderId && removed.has(canvas.folderId)) delete p.canvases[key];
+  const entities = new Set(p.entities.filter((entity) => entity.folderId && removed.has(entity.folderId)).map((entity) => entity.id));
+  if (folder.section === 'entities') p.entities = p.entities.filter((entity) => !entities.has(entity.id));
+  deleteOwnedMembers(p, entities);
+  p.variables.vars = p.variables.vars.filter((v) => !v.folderId || !removed.has(v.folderId));
+  p.variables.lists = p.variables.lists.filter((v) => !v.folderId || !removed.has(v.folderId));
+  p.variables.functions = p.variables.functions.filter((v) => !v.folderId || !removed.has(v.folderId));
+  p.settings.folders = folders.filter((f) => !removed.has(f.id));
 }
 
 /** Mutates an Immer draft. The caller commits the whole operation or nothing. */

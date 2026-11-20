@@ -143,6 +143,7 @@ export const InlineText = memo(function InlineText({
         autoCorrect={mono ? "off" : undefined}
         data-placeholder={placeholder}
         onBlur={commit}
+        onDoubleClick={(e) => e.stopPropagation()}
         onKeyDown={(e) => {
           e.stopPropagation();
           if (e.key === "Escape") {

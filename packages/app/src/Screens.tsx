@@ -1,6 +1,7 @@
 import { namespaceName, qualifiedName } from "@visink/core";
 import { NamespaceField } from "./NamespaceField";
 import { addVariableSet, moveVariable, moveFunction } from "./namespaceOps";
+import { deleteVariableSet } from "./organization";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Play, Plus, RotateCcw, StepForward, Trash2 } from "lucide-react";
 import { Story } from "inkjs";
@@ -85,9 +86,9 @@ function VariablesTable({ project, owner }: { project: Project; owner?: string }
         {checked.size > 0 && <button className="danger" onClick={() => remove(vars.filter((v) => checked.has(logicalName(v))))}><Trash2 size={14} /> Удалить выбранные ({checked.size})</button>}
       </div>
       {error && <div className="bad" role="alert">{error}</div>}
-      {vars.length > 0 && <div className="table-scroll">
-        <table className="logic-table" style={{ width: columns.total }}><colgroup>{columns.widths.map((width, i) => <col key={i} style={{ width }} />)}</colgroup>
-          <thead><tr><th><input type="checkbox" aria-label="Выбрать все переменные" checked={all} onChange={(e) => setChecked(e.target.checked ? new Set(vars.map(logicalName)) : new Set())} />{columns.handle(0, "Выбор")}</th>{[entityScope ? "Группа" : "Набор", "Имя", "Описание", "Тип", "По умолчанию", "Удаление"].map((label, i) => <th key={label}>{i < 5 ? label : ""}{columns.handle(i + 1, label)}</th>)}</tr></thead>
+      {vars.length > 0 && <div className="table-scroll" ref={columns.container}>
+        <table className="logic-table"><colgroup>{columns.widths.map((width, i) => <col key={i} style={{ width: `${width * 100}%` }} />)}</colgroup>
+          <thead><tr><th><input type="checkbox" aria-label="Выбрать все переменные" checked={all} onChange={(e) => setChecked(e.target.checked ? new Set(vars.map(logicalName)) : new Set())} />{columns.handle(0, "Выбор")}</th>{[entityScope ? "Группа" : "Набор", "Имя", "Описание", "Тип", "По умолчанию", "Удаление"].map((label, i) => <th key={label}>{i < 5 ? label : ""}{i < 5 ? columns.handle(i + 1, label) : null}</th>)}</tr></thead>
           <tbody>
             {vars.map((v) => {
               const id = logicalName(v);
@@ -199,7 +200,6 @@ export function LogicScreen() {
   const project = useStore((s) => s.project)!;
   const owner = useStore((s) => s.logicOwner);
   const set = project.variables.sets?.find((s) => s.id === owner);
-  const occupied = set && [...project.variables.vars, ...project.variables.lists, ...project.variables.functions].some((v) => v.owner === set.id);
   return <div className="screen-scroll"><div className="screen-content">
     <div className="screen-title"><h2>Переменные и логика</h2><button onClick={() => {
       let id = ""; useStore.getState().edit((p) => { id = addVariableSet(p); }); useStore.getState().selectLogicScope(id);
@@ -207,7 +207,7 @@ export function LogicScreen() {
     <Select value={set?.id ?? ""} options={[{ value: "", label: "Глобальные" }, ...(project.variables.sets ?? []).map((s) => ({ value: s.id, label: s.name }))]} onChange={(id) => useStore.getState().selectLogicScope(id || null)} />
     {set && <div className="props pad"><NamespaceField key={set.id} project={project} id={set.id} />
       <label className="field"><span className="field-label">Описание набора</span><input value={set.description ?? ""} onChange={(e) => useStore.getState().edit((p) => { p.variables.sets!.find((s) => s.id === set.id)!.description = e.target.value; })} /></label>
-      <button disabled={!!occupied} title={occupied ? "Сначала перенесите или удалите содержимое набора" : ""} onClick={() => { useStore.getState().edit((p) => { p.variables.sets = p.variables.sets?.filter((s) => s.id !== set.id); }); useStore.getState().selectLogicScope(null); }}>Удалить пустой набор</button>
+      <button onClick={() => { editAtomic((p) => deleteVariableSet(p, set.id)); useStore.getState().selectLogicScope(null); }}>Удалить набор</button>
     </div>}
     <LogicWorkspace key={set?.id ?? "globals"} owner={set?.id} />
   </div></div>;

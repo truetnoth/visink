@@ -64,6 +64,8 @@ export interface Note {
   text: string;
   x: number;
   y: number;
+  w?: number;
+  h?: number;
 }
 
 export interface Group {

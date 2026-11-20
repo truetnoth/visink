@@ -104,23 +104,22 @@ function Welcome({ onAbout }: { onAbout: () => void }) {
 }
 
 function Settings({ onClose }: { onClose: () => void }) {
-  const { cardFontSize, snap, autosaveSec, set } = usePrefs();
+  const { cardFontSize, autosaveSec, set } = usePrefs();
   return <div className="modal-backdrop" onMouseDown={onClose}><div className="modal settings" onMouseDown={(e) => e.stopPropagation()}><div className="modal-head"><div><h2>Настройки</h2><div className="muted">Хранятся на этом компьютере, в проект не попадают.</div></div><IconButton icon={X} label="Закрыть (Esc)" onClick={onClose} /></div>
     <label className="setting-row"><span>Шрифт карточек</span><Select value={String(cardFontSize)} options={Array.from({ length: FONT_MAX - FONT_MIN + 1 }, (_, i) => ({ value: String(FONT_MIN + i), label: `${FONT_MIN + i} px` }))} onChange={(value) => set({ cardFontSize: Number(value) })} /></label>
-    <label className="check"><input type="checkbox" checked={snap} onChange={(e) => set({ snap: e.target.checked })} />Привязывать карточки к сетке</label>
     <label className="setting-row"><span>Автосохранение</span><Select value={String(autosaveSec)} options={AUTOSAVE_OPTIONS.map((sec) => ({ value: String(sec), label: AUTOSAVE_LABEL[sec] }))} onChange={(value) => set({ autosaveSec: Number(value) as AutosaveSec })} /></label>
   </div></div>;
 }
 
 function About({ onClose }: { onClose: () => void }) {
-  return <div className="modal-backdrop" onMouseDown={onClose}><div className="modal" onMouseDown={(e) => e.stopPropagation()}><div className="modal-head"><div><h2>Visink {appPackage.version}</h2><div className="muted">Визуальный редактор диалогов: карточки на холсте → обычные .ink-файлы для движка.</div></div><IconButton icon={X} label="Закрыть (Esc)" onClick={onClose} /></div>
-    <img className="about-logo" src={brandLogo} alt="Visink" />
+  return <div className="modal-backdrop" onMouseDown={onClose}><div className="modal" onMouseDown={(e) => e.stopPropagation()}><div className="modal-head"><img className="about-logo" src={brandLogo} alt="Visink" /><IconButton icon={X} label="Закрыть (Esc)" onClick={onClose} /></div>
+    <p className="muted">Визуальный редактор диалогов: карточки на холсте → обычные .ink-файлы для движка.</p>
     <h3>Как игра запускает диалог</h3><p>Каждый файл — отдельный диалог. Игра вызывает <span className="mono">ChoosePathString("dean")</span> — диалог идёт с карточки-начала. Дополнительная точка входа задаётся через правый клик по карточке. Функции «Реализует игра» привязываются через <span className="mono">BindExternalFunction</span>.</p>
     <h3>Горячие клавиши</h3><table className="keys"><tbody>
       <tr><td>Двойной щелчок по пустому месту</td><td>новая реплика</td></tr>
       <tr><td>Тип ответа на карточке</td><td>изменить прямо на холсте</td></tr>
-      <tr><td>Двойной щелчок по телу вложенности</td><td>открыть вложенный поток</td></tr>
-      <tr><td>Щелчок по входу / двойной по выходу</td><td>компактное условие / действие</td></tr>
+      <tr><td>Щелчок по названию / двойной по телу вложенности</td><td>имя / открыть вложенный поток</td></tr>
+      <tr><td>Двойной щелчок по входу / выходу</td><td>условие / действие</td></tr>
       <tr><td>Щелчок по правому пину</td><td>1–4 новые карточки через каскадное меню</td></tr>
       <tr><td>Щелчок / Shift+щелчок по стрелке</td><td>выделить одну / несколько стрелок</td></tr>
       <tr><td>Стрелка из карточки в пустоту</td><td>меню: что вставить</td></tr>
@@ -136,6 +135,7 @@ function About({ onClose }: { onClose: () => void }) {
       <tr><td>Ctrl+S</td><td>сохранить и собрать ink</td></tr>
     </tbody></table>
     <div className="row"><button onClick={async () => { onClose(); const { demoProject } = await import("../../checker/test/fixtures"); useStore.getState().openInMemory(demoProject()); }}>Открыть демо-проект</button><span className="muted">в памяти, без сохранения</span></div>
+    <div className="muted about-version">Версия {appPackage.version}</div>
   </div></div>;
 }
 

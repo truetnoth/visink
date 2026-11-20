@@ -156,7 +156,7 @@ function Flow({ flowKey, viewports }: { flowKey: string; viewports: Map<string, 
         },
       };
     });
-    const notes: Node<NoteData>[] = canvas.notes.map((n) => ({ id: n.id, type: "note", position: { x: n.x, y: n.y }, data: { id: n.id, text: n.text } }));
+    const notes: Node<NoteData>[] = canvas.notes.map((n) => ({ id: n.id, type: "note", position: { x: n.x, y: n.y }, width: n.w ?? 200, ...(n.h != null ? { height: n.h } : {}), data: { id: n.id, text: n.text } }));
     const placeholders: Node[] = activeDrafts.map((draft) => ({ id: draft.id, type: "draft", position: { x: draft.x, y: draft.y }, selectable: false, deletable: false, data: {} }));
     return [...notes, ...cards, ...placeholders];
   }, [canvas, project, problems, activeDrafts, onPin, onBranch]);
@@ -554,8 +554,8 @@ function Flow({ flowKey, viewports }: { flowKey: string; viewports: Map<string, 
         onConnectEnd={onConnectEnd}
         onNodeDragStop={onNodeDragStop}
         onNodeClick={onNodeClick}
-        onNodeDoubleClick={(_, node) => {
-          if (node.type !== "card" || !key) return;
+        onNodeDoubleClick={(event, node) => {
+          if ((event.target as HTMLElement).closest(".card-head") || node.type !== "card" || !key) return;
           const card = (node.data as CardData).card;
           if (card.flow) useStore.getState().setActiveCanvas(key, [...flowPath, card.id]);
         }}
@@ -606,7 +606,7 @@ function Flow({ flowKey, viewports }: { flowKey: string; viewports: Map<string, 
           return <button key={count} className={menu?.from === pinPicker.id && menu.count === count ? "on" : ""} onMouseDown={(e) => e.preventDefault()} onMouseEnter={open} onClick={open}>{count}<ChevronRight size={14} className="submenu-arrow" /></button>;
         })}
       </div>}
-      {pinEditor && project && canvas.cards.some((card) => card.id === pinEditor.id) && <div className="pin-editor-wrap" style={popoverAt(pinEditor, 308, 190, 12, 12)} onMouseDown={(e) => e.stopPropagation()}><PinEditor card={canvas.cards.find((card) => card.id === pinEditor.id)!} field={pinEditor.field} project={project} onClose={() => setPinEditor(null)} onCommit={(value) => {
+      {pinEditor && project && canvas.cards.some((card) => card.id === pinEditor.id) && <div className="pin-editor-wrap" style={popoverAt(pinEditor, 308, 190, pinEditor.field === "condition" ? -320 : 12, 12)} onMouseDown={(e) => e.stopPropagation()}><PinEditor card={canvas.cards.find((card) => card.id === pinEditor.id)!} field={pinEditor.field} project={project} onClose={() => setPinEditor(null)} onCommit={(value) => {
         editCanvas((c) => {
           const target = c.cards.find((card) => card.id === pinEditor.id);
           if (!target) return;

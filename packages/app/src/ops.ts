@@ -200,7 +200,7 @@ export function pasteFragment(project: Project, canvas: Canvas, fragment: Fragme
 
   for (const src of fragment.cards) topIds.push(cloneCard(src, canvas, false).id);
   for (const src of fragment.notes) {
-    const note = { id: newNoteId(takenIds(root)), text: src.text, ...move(src) };
+    const note = { id: newNoteId(takenIds(root)), text: src.text, ...move(src), ...(src.w != null ? { w: src.w } : {}), ...(src.h != null ? { h: src.h } : {}) };
     canvas.notes.push(note);
     ids.set(src.id, note.id);
     topIds.push(note.id);

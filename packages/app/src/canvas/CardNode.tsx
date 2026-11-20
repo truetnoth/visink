@@ -2,7 +2,7 @@
 import { memo, useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { Node, NodeProps } from "@xyflow/react";
 import { Handle, NodeResizer, Position, useUpdateNodeInternals } from "@xyflow/react";
-import { ArrowDownToLine, Flag, Layers, Repeat, Repeat1 } from "lucide-react";
+import { ArrowDownToLine, ArrowRight, Flag, Layers, Repeat } from "lucide-react";
 import { canvasAtPath, type Entity } from "@visink/core";
 import { actionLines } from "@visink/compiler";
 import { draggedItems, jumpDrop } from "../treeDrag";
@@ -39,12 +39,12 @@ export const CardNode = memo(function CardNode({ id, data, selected, width, heig
   const multi = useStore((s) => selected && s.selection.length > 1);
   const color = card.type === "line" ? speaker?.color ?? "var(--service)" : TYPE_COLOR[card.type];
   const Icon = TYPE_ICON[card.type];
-  const RepeatIcon = card.repeat === "sticky" ? Repeat : Repeat1;
+  const RepeatIcon = card.repeat === "sticky" ? Repeat : ArrowRight;
   const action = actionLines(card.action);
   const gate = card.type !== "condition" ? card.condition?.trim() : "";
   const outPin = card.type === "line" || card.type === "hub" || card.type === "flow" || card.type === "ink";
   const compact = isCompact(card.type);
-  const headLabel = card.type === "line" ? speaker?.name ?? "без спикера" : card.type === "hub" && card.text ? `Хаб · ${card.text}` : card.type === "jump" ? `→ ${data.targetLabel ?? "Цель не задана"}` : TYPE_LABEL[card.type];
+  const headLabel = card.type === "line" ? speaker?.name ?? "без спикера" : card.type === "hub" && card.text ? `Хаб · ${card.text}` : card.type === "flow" ? card.text || "Вложенность" : card.type === "jump" ? `→ ${data.targetLabel ?? "Цель не задана"}` : TYPE_LABEL[card.type];
   const fontSize = usePrefs((s) => s.cardFontSize);
   const content = card.text || card.condition || "";
   const chars = Math.max(12, ((width ?? CARD_W) - 24) / (fontSize * 0.54));
@@ -95,15 +95,15 @@ export const CardNode = memo(function CardNode({ id, data, selected, width, heig
           editCanvas((c) => { c.layout[card.id] = { x: Math.round(p.x), y: Math.round(p.y), w: Math.round(p.width), h: Math.round(Math.max(minHeight, p.height)) }; });
         }}
       />}
-      <Handle type="target" position={Position.Left} style={{ top: "50%" }} className={`pin pin-in ${gate ? "has-logic cond" : ""}`} title={gate ? `Условие: ${gate}` : "Вход. Щелчок — условие"} onClick={card.type !== "condition" ? (e) => openLogic("condition", { x: e.clientX, y: e.clientY }) : undefined} />
+      <Handle type="target" position={Position.Left} style={{ top: "50%" }} className={`pin pin-in ${gate ? "has-logic cond" : ""}`} title={gate ? `Условие: ${gate}` : "Вход. Двойной щелчок — условие"} onDoubleClick={card.type !== "condition" ? (e) => { e.stopPropagation(); openLogic("condition", { x: e.clientX, y: e.clientY }); } : undefined} />
       {problem && <span className={`problem-badge ${problem}`} title={problemText}>!{problemCount && problemCount > 1 ? problemCount : ""}</span>}
       <div className="card-head" title={headLabel} onDoubleClick={(e) => e.stopPropagation()}>
         {isStart && <span className="chip" title="Начало файла"><Flag size={11} /></span>}
-        {card.type === "line" ? <span className="card-type">{headLabel}</span> : card.type === "hub" ? <div className="card-type nodrag"><InlineText card={card} field="text" locked={multi} placeholder="Название хаба" /></div> : <span className="card-type">{card.type === "jump" ? "Переход к:" : headLabel}</span>}
+        {card.type === "line" ? <span className="card-type">{headLabel}</span> : card.type === "hub" || card.type === "flow" ? <div className="card-type nodrag"><InlineText card={card} field="text" locked={multi} autoEdit={card.type === "flow"} placeholder={card.type === "hub" ? "Название хаба" : "Название вложенности"} /></div> : <span className="card-type">{card.type === "jump" ? "Переход к:" : headLabel}</span>}
         {card.flow && card.type !== "flow" && <span className="chip nested-chip" title="Двойной щелчок по телу — открыть вложенный поток"><Layers size={11} /></span>}
         {card.entry && <button className="chip nodrag" title="Дополнительная точка входа" aria-label="Дополнительная точка входа" onClick={(e) => { e.stopPropagation(); openControl("entry"); }}>▶</button>}
         {card.type === "jump" && action.length > 0 && <span className="chip mono" title={action.join("\n")}>~</span>}
-        {player ? card.repeat === "fallback" ? <span className="card-icon" role="img" aria-label="Запасной ответ" title="Запасной ответ"><ArrowDownToLine size={14} /></span> : <button className="card-icon card-inline-button nodrag nopan" aria-label={card.repeat === "sticky" ? "Повторяемый ответ — сделать одноразовым" : "Одноразовый ответ — сделать повторяемым"} title={card.repeat === "sticky" ? "Повторяемый ответ — сделать одноразовым" : "Одноразовый ответ — сделать повторяемым"} aria-pressed={card.repeat === "sticky"} onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") e.stopPropagation(); }} onClick={(e) => {
+        {player ? card.repeat === "fallback" ? <span className="card-icon" role="img" aria-label="Запасной ответ" title="Запасной ответ"><ArrowDownToLine size={14} /></span> : <button className="card-icon card-repeat-toggle card-inline-button nodrag nopan" aria-label={card.repeat === "sticky" ? "Повторяемый ответ — сделать одноразовым" : "Одноразовый ответ — сделать повторяемым"} title={card.repeat === "sticky" ? "Повторяемый ответ — сделать одноразовым" : "Одноразовый ответ — сделать повторяемым"} aria-pressed={card.repeat === "sticky"} onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") e.stopPropagation(); }} onClick={(e) => {
           e.stopPropagation();
           editCanvas((canvas) => { const target = canvas.cards.find((c) => c.id === card.id); if (target?.type === "line" && target.repeat !== "fallback") target.repeat = target.repeat === "sticky" ? "once" : "sticky"; });
         }}><RepeatIcon size={14} /></button> : <Icon size={14} className="card-icon" />}
@@ -115,7 +115,7 @@ export const CardNode = memo(function CardNode({ id, data, selected, width, heig
       </div> : <div className={`card-body ${multi ? "" : "nodrag"}`}>
         {card.type === "jump" && <button className="jump-target card-inline-button nodrag nopan" title="Выбрать цель перехода" onClick={(e) => { e.stopPropagation(); openControl("target"); }}>{data.targetLabel ?? "Цель не задана"}</button>}
         {card.type === "condition" && <InlineText card={card} field="condition" locked={multi} autoEdit placeholder="условие?" />}
-        {card.type === "flow" && <InlineText card={card} field="text" locked={multi} autoEdit placeholder="название вложенности…" />}
+        {card.type === "flow" && <div className="card-cell muted">Двойной щелчок — открыть вложенность</div>}
         {card.type === "ink" && <InlineText card={card} field="text" mono locked={multi} autoEdit placeholder="чистый ink" />}
         {!outPin && action.map((l, i) => <div key={i} className="card-action mono">{l}</div>)}
       </div>}

@@ -4,10 +4,10 @@ import { produce } from 'immer';
 import { Braces, ChevronDown, ChevronRight, FileText, Folder, FolderCog, Layers, List, MessageSquare, Pencil, Settings, StickyNote, Trash2, Users, Variable } from 'lucide-react';
 import { canvasAtPath, isValidInkName, namespaceError, type CardType, type Project } from '@visink/core';
 import { editAtomic, useStore } from '../store';
-import { addCanvas, addCard, addNote, defaultNpc } from '../ops';
+import { addCanvas, addCard, addNote, defaultNpc, deleteCards } from '../ops';
 import { addVariableSet, renameNamespace } from '../namespaceOps';
 import { cardTreeId, indexHierarchy, logicTreeId, projectHierarchy, type TreeNode } from '../hierarchy';
-import { createFolder, deleteEmptyFolder, moveTreeItems, renameFolder, type TreeItem } from '../organization';
+import { createFolder, deleteEntity, deleteFolder, deleteVariableSet, moveTreeItems, renameFolder, type TreeItem } from '../organization';
 import { beginTreeDrag, draggedItems, endTreeDrag, treeDestination, treeItem, resolveTreeDrop } from '../treeDrag';
 import { CreateMenu, type MenuItem } from '../canvas/menus';
 import { TYPE_ICON, TYPE_LABEL } from '../canvas/constants';
@@ -153,7 +153,7 @@ export function ProjectTree() {
     }) });
     if (n.kind === 'folder') {
       items.push({ label: 'Переименовать папку', icon: Pencil, run: () => ask('Название папки', n.title, (name) => editAtomic((p) => renameFolder(p, n.folderId!, name))) });
-      items.push({ label: 'Удалить пустую папку', icon: Trash2, run: () => editAtomic((p) => deleteEmptyFolder(p, n.folderId!)) });
+
     }
     if (place?.section === 'files') items.push({ label: 'Создать файл', icon: FileText, run: () => ask('Название файла', 'Новый файл', (name) => {
       let id = ''; editAtomic((p) => { id = addCanvas(p, name); p.canvases[id].folderId = place.folderId; }); useStore.getState().setActiveCanvas(id);
@@ -192,6 +192,36 @@ export function ProjectTree() {
         useStore.getState().setActiveCanvas(canvasDest.root, canvasDest.path); useStore.getState().setSelection([id]);
       } });
     }
+    if (n.kind !== 'root' && !(n.kind === 'scope' && !n.owner)) items.push({ label: 'Удалить', icon: Trash2, run: () => {
+      editAtomic((p) => {
+        if (n.kind === 'folder') deleteFolder(p, n.folderId!);
+        else if (n.kind === 'file') delete p.canvases[n.root!];
+        else if (n.kind === 'entity') deleteEntity(p, n.owner!);
+        else if (n.kind === 'scope') deleteVariableSet(p, n.owner!);
+        else if (n.kind === 'var' || n.kind === 'list' || n.kind === 'func') {
+          const collection = n.kind === 'var' ? p.variables.vars : n.kind === 'list' ? p.variables.lists : p.variables.functions;
+          const index = collection.findIndex((item) => item.name === n.name && item.owner === n.owner);
+          if (index >= 0) collection.splice(index, 1);
+        } else {
+          const canvas = canvasAtPath(p.canvases[n.root!], n.path ?? []);
+          if (!canvas) return;
+          if (n.kind === 'card') deleteCards(canvas, [n.card!]);
+          else if (n.kind === 'note') canvas.notes = canvas.notes.filter((note) => note.id !== n.card);
+          else if (n.kind === 'group') canvas.groups = canvas.groups.filter((_, index) => index !== n.group);
+        }
+      });
+      const st = useStore.getState(), p = st.project;
+      if (!p) return;
+      if (st.activeCanvas && !p.canvases[st.activeCanvas]) st.setActiveCanvas(null);
+      if (st.selectedEntity && !p.entities.some((entity) => entity.id === st.selectedEntity)) st.selectEntity(null);
+      if (st.logicOwner && !p.variables.sets?.some((set) => set.id === st.logicOwner)) st.selectLogicScope(null);
+      if (st.inspect) {
+        const { kind, name, owner } = st.inspect;
+        const collection = kind === 'var' ? p.variables.vars : kind === 'list' ? p.variables.lists : p.variables.functions;
+        if (!collection.some((item) => item.name === name && item.owner === owner)) useStore.setState({ inspect: null });
+      }
+      if (n.kind === 'card' || n.kind === 'note' || n.kind === 'group') st.setSelection([]);
+    } });
     return items;
   };
   return <div className="project-tree" ref={ref} onDragLeave={(e) => { if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setDropTarget(''); }}>

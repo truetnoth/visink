@@ -15,6 +15,7 @@ export interface TreeNode {
   section?: FolderSection;
   folderId?: string;
   nested?: boolean;
+  group?: number;
 }
 export const cardTreeId = (root: string, id: string) => `card:${root}:${id}`;
 export const logicTreeId = (kind: string, name: string, owner?: string) => `logic:${kind}:${owner ?? ""}:${name}`;
@@ -37,7 +38,7 @@ export function projectHierarchy(project: Project): TreeNode[] {
     });
     return [...cards,
       ...canvas.notes.map((n) => node(`note:${root}:${n.id}`, title(n.text || "Заметка"), "note", { root, path, card: n.id })),
-      ...canvas.groups.map((g, i) => node(`group:${root}:${path.join("/")}:${i}`, `${g.title} (${g.cards.length})`, "group", { root, path, members: g.cards })),
+      ...canvas.groups.map((g, i) => node(`group:${root}:${path.join("/")}:${i}`, `${g.title} (${g.cards.length})`, "group", { root, path, members: g.cards, group: i })),
     ];
   };
   const organized = (items: TreeNode[], section: FolderSection): TreeNode[] => {

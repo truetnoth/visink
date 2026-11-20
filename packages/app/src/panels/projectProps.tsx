@@ -98,7 +98,7 @@ export function EntityProps({ entity, project }: { entity: Entity; project: Proj
   return (
     <div className="props entity-props">
       {naming ? <input className="entity-title-input" aria-label="Имя сущности" autoFocus value={name} onChange={(e) => setName(e.target.value)} onBlur={commitName} onKeyDown={(e) => { if (e.key === "Enter") commitName(); if (e.key === "Escape") { cancelled.current = true; setNaming(false); } }} /> : <h2 className="entity-title" tabIndex={0} title="Двойной щелчок — переименовать" onDoubleClick={startName} onKeyDown={(e) => { if (e.key === "Enter" || e.key === "F2") startName(); }}>{entity.name}</h2>}
-      <div className="entity-intro"><PortraitPreview entity={entity} /><textarea aria-label="Описание сущности" placeholder="Описание (необязательно)" rows={3} value={entity.description ?? ""} onChange={(e) => set("description", e.target.value || undefined)} /></div>
+      <div className="entity-intro"><PortraitPreview entity={entity} /><textarea aria-label="Описание сущности" placeholder="Описание" rows={3} value={entity.description ?? ""} onChange={(e) => set("description", e.target.value || undefined)} /></div>
       <div className="entity-fields">
         <NamespaceField key={entity.id} project={project} id={entity.id} />
         <Field label="Имя в ink"><Text value={entity.inkName} onChange={(v) => set("inkName", v)} /></Field>

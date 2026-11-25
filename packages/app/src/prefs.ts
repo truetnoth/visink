@@ -13,11 +13,13 @@ export const FONT_MAX = 20;
 interface Prefs {
   cardFontSize: number;
   snap: boolean;
+  showAvatars: boolean;
+  showGrid: boolean;
   autosaveSec: AutosaveSec;
 }
 
 const KEY = "visink-prefs";
-const DEFAULTS: Prefs = { cardFontSize: 12, snap: true, autosaveSec: 60 };
+const DEFAULTS: Prefs = { cardFontSize: 12, snap: true, showAvatars: true, showGrid: true, autosaveSec: 60 };
 
 function read(): Prefs {
   try {
@@ -26,6 +28,8 @@ function read(): Prefs {
     return {
       cardFontSize: font >= FONT_MIN && font <= FONT_MAX ? font : DEFAULTS.cardFontSize,
       snap: typeof raw.snap === "boolean" ? raw.snap : DEFAULTS.snap,
+      showAvatars: typeof raw.showAvatars === "boolean" ? raw.showAvatars : DEFAULTS.showAvatars,
+      showGrid: typeof raw.showGrid === "boolean" ? raw.showGrid : DEFAULTS.showGrid,
       autosaveSec: AUTOSAVE_OPTIONS.includes(raw.autosaveSec) ? raw.autosaveSec : DEFAULTS.autosaveSec,
     };
   } catch {
@@ -37,9 +41,9 @@ export const usePrefs = create<Prefs & { set: (patch: Partial<Prefs>) => void }>
   ...read(),
   set(patch) {
     set(patch);
-    const { cardFontSize, snap, autosaveSec } = get();
+    const { cardFontSize, snap, showAvatars, showGrid, autosaveSec } = get();
     try {
-      localStorage.setItem(KEY, JSON.stringify({ cardFontSize, snap, autosaveSec }));
+      localStorage.setItem(KEY, JSON.stringify({ cardFontSize, snap, showAvatars, showGrid, autosaveSec }));
     } catch {
       // не запомним — не страшно
     }

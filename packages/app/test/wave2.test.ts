@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { produce } from 'immer';
-import { createCanvas, createCard, createProject, loadProject, saveProject, MemoryFs } from '@visink/core';
+import { createCanvas, createCard, createProject, loadProject, saveProject, MemoryFs, canvasLocations } from '@visink/core';
 import { buildProject } from '@visink/compiler';
 import { checkProject } from '@visink/checker';
 import { projectHierarchy, indexHierarchy } from '../src/hierarchy';
@@ -9,6 +9,7 @@ import { resolveTreeDrop, treeItem } from '../src/treeDrag';
 import { setCardEntry } from '../src/cardEditing';
 import { defaultNpc } from '../src/ops';
 import { searchProject } from '../src/search';
+import { projectStats } from '../src/stats';
 
 function fixture() {
   const p = createProject('Second wave');
@@ -33,7 +34,7 @@ describe('вторая волна', () => {
     const before = buildProject(p); const fs = new MemoryFs();
     await saveProject(fs, p); const reopened = await loadProject(fs);
     expect(reopened.entities[0].description).toBe('История героя');
-    expect(reopened.canvases.scene.cards[0]).toMatchObject({ emotion: 'calm', status: 'final', note: 'private', tags: { custom: 'old' } });
+    expect(canvasLocations(reopened).find(({ canvas }) => canvas.id === 'scene')!.canvas.cards.find((card) => card.id === 'line')).toMatchObject({ emotion: 'calm', status: 'final', note: 'private', tags: { custom: 'old' } });
     expect(buildProject(reopened).files).toEqual(before.files);
   });
   it('переименовывает точку входа, сохраняет переходы и запуск; очистка ведёт к самой карточке', () => {
@@ -67,6 +68,43 @@ describe('вторая волна', () => {
     expect([...index.nodes.values()].some((n) => ['var', 'func', 'list'].includes(n.kind))).toBe(false);
     expect(index.nodes.has(`folder:${folderId}`)).toBe(false);
     expect(searchProject(p, 'old').get('var')?.[0].id).toBe('old');
+  });
+  it('статистика считает авторский текст и элементы без технических границ', () => {
+    const p = createProject('Stats');
+    const box = createCard('box', 'flow', { text: 'Название не считается', description: 'Описание блока' });
+    box.flow!.cards.push(createCard('nested', 'line', { speaker: 'ent_narrator', text: 'Привет мир' }));
+    const hub = createCard('hub', 'hub', { text: 'Тоже не считается' });
+    const raw = createCard('raw', 'ink', { text: '-> END' });
+    const player = createCard('player', 'line', { speaker: 'ent_player', text: 'Пойду', menuText: 'Да' });
+    p.canvases.main.cards.push(box, hub, raw, player);
+    p.canvases.main.links.push({ from: 'hub', to: 'player', order: 0, kind: 'divert' });
+    p.canvases.main.notes.push({ id: 'note', text: 'Два слова', x: 0, y: 0 });
+    expect(projectStats(p)).toMatchObject({ words: 8, elements: 6, lines: 2, playerOptions: 1, hubs: 1, inkCards: 1, notes: 1, flows: 1, links: 1 });
+  });
+  it('сохраняет пользовательские цвета карточки и заметки при повторном открытии', async () => {
+    const p = createProject('Colors');
+    p.canvases.main.cards.push(createCard('colored', 'flow', { text: 'Цветной блок', color: '#ef4444' }));
+    p.canvases.main.notes.push({ id: 'colored_note', text: 'Цвет', color: '#10b981', x: 0, y: 0 });
+    const fs = new MemoryFs();
+    await saveProject(fs, p);
+    const loaded = await loadProject(fs);
+    expect(loaded.canvases.main.cards.find((card) => card.id === 'colored')?.color).toBe('#ef4444');
+    expect(loaded.canvases.main.notes.find((note) => note.id === 'colored_note')?.color).toBe('#10b981');
+  });
+  it('делает главный канвас корнем дерева без дубля файла, заметок и префикса вложенности', () => {
+    const p = fixture();
+    const container = createCard('container', 'flow', { text: 'Контейнер' });
+    p.canvases.main.cards.push(container, createCard('gate', 'condition', { condition: 'true' }), createCard('go', 'jump', { target: 'main.container' }));
+    p.canvases.main.notes.push({ id: 'root_note', text: 'Не показывать', x: 0, y: 0 });
+    const roots = projectHierarchy(p); const index = indexHierarchy(roots);
+    const files = roots.find((node) => node.id === 'files')!;
+    expect(files).toMatchObject({ title: 'Second wave', root: 'main', path: [] });
+    expect(index.nodes.has('file:main')).toBe(false);
+    expect(index.nodes.has('file:scene')).toBe(true);
+    expect(index.nodes.has('note:main:root_note')).toBe(false);
+    expect(index.nodes.get('card:main:container')?.title).toBe('Контейнер');
+    expect(index.nodes.get('card:main:go')?.title).toBe('Переход → Контейнер');
+    expect(index.nodes.get('card:main:gate')?.cardType).toBe('condition');
   });
   it('принимает перенос в содержимое папки, отдавая приоритет вложенному контейнеру', () => {
     const p = fixture(); const f = createFolder(p, 'files', 'Сцены'); const inner = createFolder(p, 'files', 'Акт', f);

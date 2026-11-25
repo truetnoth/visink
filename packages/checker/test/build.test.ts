@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { Story } from "inkjs/full";
-import { MemoryFs, createCanvas, createCard, createProject, loadProject, saveProject, stableStringify, writeBuild } from "@visink/core";
-import { buildProject, escapeInkText } from "@visink/compiler";
+import { MemoryFs, createCanvas, createCard, createProject, loadProject, saveProject, stableStringify, writeBuild, canvasLocations } from "@visink/core";
+import { buildProject, escapeInkText, resolveTarget } from "@visink/compiler";
 import { checkProject } from "../src";
 import { demoProject } from "./fixtures";
 
@@ -288,7 +288,8 @@ describe("проверки", () => {
     const target = createCanvas("target", "Цели");
     const dest = createCard("dest", type, { speaker: "ent_narrator", text: "Цель." });
     if (type === "flow") {
-      dest.flow!.cards = [createCard("inside", "line", { speaker: "ent_narrator", text: "Внутри вложенности." })];
+      dest.flow = createCanvas("target_dest", "Внутри вложенности");
+      dest.flow.cards = [createCard("inside", "line", { speaker: "ent_narrator", text: "Внутри вложенности." })];
       dest.flow!.layout.inside = { x: 0, y: 0 };
     }
     target.cards = [createCard("decoy", "line", { speaker: "ent_narrator", text: "Не туда." }), dest];
@@ -356,8 +357,8 @@ describe("файлы проекта", () => {
       }),
     );
     const p = await loadProject(fs);
-    const dean = p.canvases.dean;
-    expect(dean.cards.map((c) => `${c.id}:${c.type}${c.entry ? `:${c.entry}` : ""}`)).toEqual(["l1:line:hello", "l2:line", "l3:line", "e2:ink"]);
+    const dean = canvasLocations(p).find(({ canvas }) => canvas.id === "dean")!.canvas;
+    expect(dean.cards.map((c) => `${c.id}:${c.type}${c.entry ? `:${c.entry}` : ""}`)).toEqual(["__entry:entry", "l1:line:hello", "l2:line", "l3:line", "e2:ink", "__exit:exit"]);
     expect(dean.graveyard.sort()).toEqual(["e1", "s0"]);
     const r = checkProject(p);
     expect(r.diagnostics.filter((d) => d.severity === "error")).toEqual([]);
@@ -367,7 +368,7 @@ describe("файлы проекта", () => {
     expect(story.ContinueMaximally()).toBe("ИГРОК: Конец игры.\n");
 
     await saveProject(fs, p);
-    expect(await fs.listFiles("canvases")).toEqual(["canvases/dean.canvas.json"]);
+    expect(await fs.listFiles("canvases")).toEqual(["canvases/main.canvas.json"]);
     expect(await saveProject(fs, await loadProject(fs))).toEqual([]);
   });
 
@@ -378,7 +379,7 @@ describe("файлы проекта", () => {
     p.variables.functions.push({ name: "f", params: ["a"], body: "~ return a", external: true });
     await saveProject(fs, p);
     const loaded = await loadProject(fs);
-    expect(loaded.canvases.dean.layout.c2).toMatchObject({ w: 320, h: 140 });
+    expect(canvasLocations(loaded).find(({ canvas }) => canvas.id === "dean")!.canvas.layout.c2).toMatchObject({ w: 320, h: 140 });
     expect(loaded.variables.functions).toEqual(p.variables.functions);
     expect(await saveProject(fs, loaded)).toEqual([]);
   });
@@ -452,8 +453,10 @@ describe("файлы проекта", () => {
 
     const fs = new MemoryFs();
     await saveProject(fs, p);
+    const oldSettings = JSON.parse(fs.files.get("project.json")!);
+    fs.files.set("project.json", JSON.stringify({ ...oldSettings, formatVersion: 3 }));
     const loaded = await loadProject(fs);
-    const dean = loaded.canvases.dean;
+    const dean = canvasLocations(loaded).find(({ canvas }) => canvas.id === "dean")!.canvas;
     const card = (id: string) => dean.cards.find((x) => x.id === id)!;
     expect(card("n2").condition).toBe("x");
     // у стрелки было и условие — действие уходит в цель, а не в источник (иначе выполнится до проверки)
@@ -461,7 +464,7 @@ describe("файлы проекта", () => {
     expect(card("n2").action).toBe("x = false");
     expect(card("p1").condition).toBe("y");
     expect(card("p1").action).toBe("y = false");
-    expect(dean.links.map((l) => [l.to, l.condition ?? "", l.action ?? ""])).toEqual([
+    expect(dean.links.filter((link) => !["__entry", "__exit"].includes(link.from) && !["__entry", "__exit"].includes(link.to)).map((l) => [l.to, l.condition ?? "", l.action ?? ""])).toEqual([
       ["n2", "", ""],
       ["p1", "", ""],
       ["p2", "z", ""],
@@ -477,7 +480,7 @@ describe("файлы проекта", () => {
 });
 
 describe("вложенные потоки и свойства персонажей", () => {
-  it("nested сохраняется, компилируется в родительский knot и запускается по entry", async () => {
+  it("nested сохраняется, экспортируется отдельным knot и запускается по прежнему entry", async () => {
     const p = createProject("nested");
     const c = createCanvas("scene", "Сцена");
     const outer = createCard("outer", "line", { speaker: "ent_narrator", text: "Снаружи." });
@@ -498,8 +501,9 @@ describe("вложенные потоки и свойства персонаже
     const fs = new MemoryFs();
     await saveProject(fs, p);
     const loaded = await loadProject(fs);
-    const nested = loaded.canvases.scene.cards[0].flow!;
-    expect(nested.cards.map((x) => x.id)).toEqual(["inner_1", "inner_2"]);
+    const scene = canvasLocations(loaded).find(({ canvas }) => canvas.id === "scene")!.canvas;
+    const nested = scene.cards.find((card) => card.id === "outer")!.flow!;
+    expect(nested.cards.filter((card) => card.type !== "entry" && card.type !== "exit").map((x) => x.id)).toEqual(["inner_1", "inner_2"]);
     expect(await saveProject(fs, loaded)).toEqual([]);
 
     const r = checkProject(loaded);
@@ -508,7 +512,7 @@ describe("вложенные потоки и свойства персонаже
     expect(ink.match(/^=== scene ===$/gm)).toHaveLength(1);
     expect(ink).toContain("= entry_inner");
     expect(ink).toContain("= inner_1");
-    expect(ink).not.toContain("=== scene_outer ===");
+    expect(r.build.files.get("scene_outer.ink")).toContain("=== scene_outer ===");
     const story = new Story(r.storyJson!);
     story.ChoosePathString("scene.entry_inner");
     expect(story.ContinueMaximally()).toBe("Внутри.\nКонец.\n");
@@ -549,7 +553,8 @@ describe("вложенные потоки и свойства персонаже
     p.variables.vars.push({ name: "allowed", type: "bool", default: false });
     const c = createCanvas("scene", "Сцена");
     const box = createCard("box", "flow", { text: "Блок", condition: "allowed" });
-    box.flow!.cards = [createCard("nested_choice", "line", { speaker: "ent_player", text: "Ответ из вложенности.", menuText: "Вложенный вариант" })];
+    box.flow = createCanvas("scene_box", "Блок");
+    box.flow.cards = [createCard("nested_choice", "line", { speaker: "ent_player", text: "Ответ из вложенности.", menuText: "Вложенный вариант" })];
     box.flow!.layout.nested_choice = { x: 0, y: 0 };
     c.cards = [
       createCard("hub", "hub"),
@@ -627,5 +632,320 @@ describe("вложенные потоки и свойства персонаже
     story.ChoosePathString("dean");
     story.ContinueMaximally();
     expect(story.variablesState["thesis_changed"]).toBe(true);
+  });
+});
+
+
+describe("канвасы v4: границы, вложенные варианты и совместимость", () => {
+  const link = (from: string, to: string, order = 0, extra: Partial<import("@visink/core").Link> = {}) => ({ from, to, order, kind: "divert" as const, ...extra });
+  const place = (canvas: import("@visink/core").Canvas) => {
+    canvas.cards.forEach((card, i) => { canvas.layout[card.id] = { x: i * 300, y: i * 180 }; });
+    return canvas;
+  };
+  const errors = (p: ReturnType<typeof createProject>) => checkProject(p).diagnostics.filter((d) => d.severity === "error");
+
+  it("собирает варианты из двух многоуровневых вложенностей в одном меню и исполняет действия только на выбранном маршруте", () => {
+    const p = createProject("groups");
+    p.variables.vars.push(
+      { name: "allow_a", type: "bool", default: true },
+      { name: "allow_b", type: "bool", default: true },
+      { name: "show_b2", type: "bool", default: true },
+      { name: "marks", type: "int", default: 0 },
+    );
+    const scene = createCanvas("scene", "Сцена");
+    const hub = createCard("hub", "hub", { action: "marks += 1" });
+    const after = createCard("after", "line", { speaker: "ent_narrator", text: "После." });
+    const boxA = createCard("box_a", "flow", { text: "Одинаковое имя", action: "marks += 10" });
+    const boxB = createCard("box_b", "flow", { text: "Одинаковое имя" });
+    const inner = createCanvas("inner_a", "Внутренний уровень");
+    const innerRouter = createCard("inner_router", "hub", { action: "marks += 100" });
+    const a1 = createCard("a1", "line", { speaker: "ent_player", menuText: "A1", text: "Выбрано A1.", repeat: "once", action: "marks += 1000" });
+    const a2 = createCard("a2", "line", { speaker: "ent_player", menuText: "A2", text: "Выбрано A2.", repeat: "sticky" });
+    inner.cards = [innerRouter, a1, a2];
+    inner.start = innerRouter.id;
+    inner.links = [link(innerRouter.id, a1.id), link(innerRouter.id, a2.id, 1)];
+    place(inner);
+    const middle = createCard("middle", "flow", { text: "Средний уровень", action: "marks += 10000" });
+    middle.flow = inner;
+    const routerA = createCard("router_a", "hub");
+    boxA.flow = createCanvas("group_a", "Группа A");
+    boxA.flow.cards = [routerA, middle];
+    boxA.flow.start = routerA.id;
+    boxA.flow.links = [link(routerA.id, middle.id)];
+    place(boxA.flow);
+    const routerB = createCard("router_b", "hub");
+    const fallback = createCard("b1", "line", { speaker: "ent_player", text: "Запасной B1.", repeat: "fallback", action: "marks = 777" });
+    const b2 = createCard("b2", "line", { speaker: "ent_player", menuText: "B2", text: "Выбрано B2.", condition: "show_b2" });
+    boxB.flow = createCanvas("group_b", "Группа B");
+    boxB.flow.cards = [routerB, fallback, b2];
+    boxB.flow.start = routerB.id;
+    boxB.flow.links = [link(routerB.id, fallback.id), link(routerB.id, b2.id, 1)];
+    place(boxB.flow);
+    scene.cards = [hub, boxA, boxB, after];
+    scene.start = hub.id;
+    scene.links = [
+      link(hub.id, boxA.id, 0, { condition: "allow_a", action: "marks += 100000" }),
+      link(hub.id, boxB.id, 1, { condition: "allow_b" }),
+      link(boxA.id, after.id), link(boxB.id, after.id), link(after.id, hub.id),
+    ];
+    place(scene);
+    p.canvases = { scene };
+    p.settings.start = "scene";
+    const r = checkProject(p);
+    expect(r.diagnostics.filter((d) => d.severity === "error")).toEqual([]);
+    expect(r.build.files.has("group_a.ink")).toBe(true);
+    expect(r.build.files.has("inner_a.ink")).toBe(true);
+    expect(r.build.files.has("group_b.ink")).toBe(true);
+
+    const story = new Story(r.storyJson!);
+    story.ChoosePathString("scene");
+    story.ContinueMaximally();
+    expect(story.currentChoices.map((c) => c.text)).toEqual(["A1", "A2", "B2"]);
+    expect(story.variablesState["marks"]).toBe(1);
+    story.ChooseChoiceIndex(0);
+    expect(story.ContinueMaximally()).toContain("Выбрано A1.\nПосле.");
+    expect(story.variablesState["marks"]).toBe(1 + 10 + 100 + 10000 + 100000 + 1000 + 1);
+    expect(story.currentChoices.map((c) => c.text)).toEqual(["A2", "B2"]);
+
+    const closed = new Story(r.storyJson!);
+    closed.variablesState["allow_a"] = false;
+    closed.ChoosePathString("scene");
+    closed.ContinueMaximally();
+    expect(closed.currentChoices.map((c) => c.text)).toEqual(["B2"]);
+
+    const fallbackOnly = new Story(r.storyJson!);
+    fallbackOnly.variablesState["allow_a"] = false;
+    fallbackOnly.variablesState["show_b2"] = false;
+    fallbackOnly.ChoosePathString("scene");
+    expect(fallbackOnly.ContinueMaximally()).toContain("Запасной B1.\nПосле.");
+    expect(fallbackOnly.variablesState["marks"]).toBe(778);
+  });
+
+  it("реплика NPC внутри вложенности исполняется до её собственного меню", () => {
+    const p = createProject("npc-first");
+    const scene = createCanvas("scene", "Сцена");
+    const hub = createCard("hub", "hub");
+    const box = createCard("box", "flow", { text: "Блок" });
+    box.flow = createCanvas("box_flow", "Блок");
+    const npc = createCard("npc", "line", { speaker: "ent_narrator", text: "Сначала NPC." });
+    const option = createCard("option", "line", { speaker: "ent_player", menuText: "Ответ", text: "Ответ игрока." });
+    box.flow.cards = [npc, option];
+    box.flow.start = npc.id;
+    box.flow.links = [link(npc.id, option.id)];
+    scene.cards = [hub, box];
+    scene.start = hub.id;
+    scene.links = [link(hub.id, box.id)];
+    p.canvases = { scene };
+    const r = checkProject(p);
+    expect(r.diagnostics.filter((d) => d.severity === "error")).toEqual([]);
+    const story = new Story(r.storyJson!);
+    story.ChoosePathString("scene");
+    expect(story.ContinueMaximally()).toBe("Сначала NPC.\n");
+    expect(story.currentChoices.map((c) => c.text)).toEqual(["Ответ"]);
+  });
+
+  it("пустые вложенности и несколько выходов подряд возвращаются в родителя, корневой выход завершает поток", () => {
+    const p = createProject("empty");
+    const scene = createCanvas("scene", "Сцена");
+    const before = createCard("before", "line", { speaker: "ent_narrator", text: "До." });
+    const outer = createCard("outer", "flow", { text: "Пустая" });
+    const inner = createCard("inner", "flow", { text: "Пустая внутри" });
+    outer.flow = createCanvas("outer_flow", "Пустая");
+    outer.flow.cards = [inner];
+    outer.flow.start = inner.id;
+    inner.flow = createCanvas("inner_flow", "Пустая внутри");
+    const after = createCard("after", "line", { speaker: "ent_narrator", text: "После." });
+    scene.cards = [before, outer, after];
+    scene.start = before.id;
+    scene.links = [link(before.id, outer.id), link(outer.id, after.id)];
+    p.canvases = { scene };
+    const r = checkProject(p);
+    expect(r.diagnostics.filter((d) => d.severity === "error")).toEqual([]);
+    const story = new Story(r.storyJson!);
+    story.ChoosePathString("scene");
+    expect(story.ContinueMaximally()).toBe("До.\nПосле.\n");
+    expect(story.canContinue).toBe(false);
+    expect(story.currentChoices).toEqual([]);
+  });
+
+  it("миграция сохраняет прямой старт игрока, старые карточки/entry и локальные ссылки raw Ink", () => {
+    const p = createProject("legacy");
+    p.variables.vars.push({ name: "turns", type: "int", default: -1 });
+    const dialog = createCanvas("dialog", "Диалог");
+    const box = createCard("box", "flow", { text: "Блок" });
+    box.flow = createCanvas("legacy_box", "Блок");
+    const inner = createCard("inner", "ink", { text: "~ turns = TURNS_SINCE(-> inner)\n-> tail" });
+    box.flow.cards = [inner];
+    box.flow.start = inner.id;
+    const tail = createCard("tail", "line", { speaker: "ent_narrator", text: "Хвост.", entry: "intro" });
+    const seen = createCard("seen", "ink", { text: "{READ_COUNT(-> dialog.inner) > 0:Seen|Missed}" });
+    dialog.cards = [box, tail, seen];
+    dialog.start = box.id;
+    dialog.links = [link(box.id, tail.id), link(tail.id, seen.id)];
+    p.canvases = { dialog };
+    p.settings.start = "dialog";
+    const r = checkProject(p);
+    expect(r.diagnostics.filter((d) => d.severity === "error")).toEqual([]);
+    const story = new Story(r.storyJson!);
+    story.ChoosePathString("dialog.inner");
+    expect(story.ContinueMaximally()).toBe("Хвост.\nSeen\n");
+    expect(story.variablesState["turns"]).toBe(0);
+    const entry = new Story(r.storyJson!);
+    entry.ChoosePathString("dialog.entry_intro");
+    expect(entry.ContinueMaximally()).toBe("Хвост.\nMissed\n");
+    expect(r.build.manifest.lines["dialog.tail"]).toMatchObject({ canvas: "dialog", card: "tail", text: "Хвост." });
+
+    const direct = createProject("direct-player");
+    const c = createCanvas("dialog", "Диалог");
+    c.cards = [createCard("player", "line", { speaker: "ent_player", text: "Старый прямой ответ.", entry: "intro" })];
+    c.start = "player";
+    direct.canvases = { dialog: c };
+    direct.settings.start = "dialog";
+    const directResult = checkProject(direct);
+    for (const target of ["main", "dialog", "dialog.entry_intro"]) {
+      const directStory = new Story(directResult.storyJson!);
+      if (target !== "main") directStory.ChoosePathString(target);
+      expect(directStory.ContinueMaximally()).toBe("ИГРОК: Старый прямой ответ.\n");
+      expect(directStory.currentChoices).toEqual([]);
+    }
+  });
+
+  it("v4 не восстанавливает намеренно удалённую связь входа и не смешивает одинаковые id старых файлов", async () => {
+    const fs = new MemoryFs();
+    for (const id of ["dialog", "other"]) {
+      const c = createCanvas(id, id);
+      c.cards = [createCard("c1", "line", { speaker: "ent_narrator", text: id, entry: "intro" })];
+      c.start = "c1";
+      await fs.writeText(`canvases/${id}.canvas.json`, stableStringify(c));
+    }
+    await fs.writeText("project.json", stableStringify({ name: "old", buildDir: "build", languages: ["ru"], start: "dialog.intro", formatVersion: 3 }));
+    await fs.writeText("entities.json", stableStringify(createProject("x").entities));
+    const loaded = await loadProject(fs);
+    expect(loaded.canvases.main.legacyId).toBeUndefined();
+    expect(canvasLocations(loaded).filter(({ canvas }) => canvas.id === "dialog" || canvas.id === "other")).toHaveLength(2);
+    expect(checkProject(loaded).diagnostics.filter((d) => d.severity === "error")).toEqual([]);
+    const main = loaded.canvases.main;
+    const entry = main.cards.find((c) => c.type === "entry")!;
+    main.links = main.links.filter((l) => l.from !== entry.id);
+    await saveProject(fs, loaded);
+    await fs.writeText("canvases/dialog.canvas.json", stableStringify(createCanvas("dialog", "stale")));
+    const reopened = await loadProject(fs);
+    expect(canvasLocations(reopened).filter(({ canvas }) => canvas.id === "dialog")).toHaveLength(1);
+    expect(reopened.canvases.main.links.some((l) => l.from === entry.id)).toBe(false);
+    expect(await saveProject(fs, reopened)).toEqual(["canvases/dialog.canvas.json"]);
+    expect(await saveProject(fs, await loadProject(fs))).toEqual([]);
+  });
+});
+
+
+describe("дополнительные регрессии совместимости", () => {
+  it("обычный возврат на хаб не копирует one-shot меню", () => {
+    const story = new Story(checkProject(demoProject()).storyJson!);
+    story.ChoosePathString("advisor");
+    story.ContinueMaximally();
+    expect(story.currentChoices.map((c) => c.text)).toContain("Спросить про архив.");
+    story.ChooseChoiceIndex(story.currentChoices.findIndex((c) => c.text === "Спросить про архив."));
+    story.ContinueMaximally();
+    expect(story.currentChoices.map((c) => c.text)).not.toContain("Спросить про архив.");
+    expect(story.currentChoices.map((c) => c.text)).toContain("Уйти.");
+  });
+
+  it("карта main.ink учитывает INCLUDE, а ошибка общего варианта сохраняет исходный canvas", () => {
+    const p = createProject("line-map");
+    const main = p.canvases.main;
+    const raw = createCard("broken", "ink", { text: "-> nowhere" });
+    main.cards.push(raw);
+    main.layout[raw.id] = { x: 0, y: 0 };
+    const entry = main.cards.find((c) => c.type === "entry")!;
+    main.links = [{ from: entry.id, to: raw.id, order: 0, kind: "divert" }];
+    const nestedRoot = createCanvas("scene", "Сцена");
+    nestedRoot.cards = [createCard("line", "line", { speaker: "ent_narrator", text: "Scene" })];
+    nestedRoot.start = "line";
+    p.canvases.scene = nestedRoot;
+    const mainResult = checkProject(p);
+    expect(mainResult.diagnostics).toContainEqual(expect.objectContaining({ code: "ink", canvas: "main", card: "broken" }));
+
+    const groups = createProject("diagnostic-origin");
+    const scene = createCanvas("scene", "Сцена");
+    const hub = createCard("hub", "hub");
+    const box = createCard("box", "flow", { text: "Блок" });
+    box.flow = createCanvas("group", "Группа");
+    const option = createCard("option", "line", { speaker: "ent_player", menuText: "Вариант", text: "Текст", condition: "missing_name" });
+    box.flow.cards = [option];
+    box.flow.start = option.id;
+    scene.cards = [hub, box];
+    scene.start = hub.id;
+    scene.links = [{ from: hub.id, to: box.id, order: 0, kind: "divert" }];
+    groups.canvases = { scene };
+    const result = checkProject(groups);
+    expect(result.diagnostics.filter((d) => d.card === "option" && d.severity === "error")).toEqual(expect.arrayContaining([
+      expect.objectContaining({ canvas: "group" }),
+    ]));
+    expect(result.diagnostics.filter((d) => d.card === "option" && d.severity === "error").every((d) => d.canvas === "group")).toBe(true);
+  });
+
+  it.each(["var", "function"] as const)("глобальный %s main не конфликтует с главным knot и сохраняет текстовый id", (kind) => {
+    const p = createProject("main-collision");
+    if (kind === "var") p.variables.vars.push({ name: "main", type: "int", default: 1 });
+    else p.variables.functions.push({ name: "main", params: [], body: "~ return 5" });
+    p.variables.vars.push({ name: "result", type: "int", default: 0 });
+    const main = p.canvases.main;
+    const line = createCard("line", "line", { speaker: "ent_narrator", text: "Главный.", action: kind === "var" ? "main = 7" : "result = main()" });
+    main.cards.push(line);
+    main.layout[line.id] = { x: 0, y: 0 };
+    const entry = main.cards.find((c) => c.type === "entry")!;
+    const exit = main.cards.find((c) => c.type === "exit")!;
+    main.links = [{ from: entry.id, to: line.id, order: 0, kind: "divert" }, { from: line.id, to: exit.id, order: 0, kind: "divert" }];
+    const r = checkProject(p);
+    expect(r.diagnostics.filter((d) => d.severity === "error")).toEqual([]);
+    expect(r.build.files.get("main.ink")).toContain("=== __visink_main ===");
+    expect(r.build.manifest.start).toBe("__visink_main");
+    expect(r.build.manifest.lines["main.line"]).toBeDefined();
+    const story = new Story(r.storyJson!);
+    expect(story.ContinueMaximally()).toBe("Главный.\n");
+    expect(story.currentTags).toContain("id: main.line");
+    expect(story.variablesState[kind === "var" ? "main" : "result"]).toBe(kind === "var" ? 7 : 5);
+    const byManifest = new Story(r.storyJson!);
+    byManifest.ChoosePathString(r.build.manifest.start!);
+    expect(byManifest.ContinueMaximally()).toBe("Главный.\n");
+  });
+});
+
+
+describe("интерполяция текста через Ink", () => {
+  it("вычисляет проектные и scoped выражения, сохраняя литералы и порядок действий", () => {
+    const p = createProject("interpolation");
+    p.variables.sets = [{ id: "quest", name: "quest" }];
+    p.variables.vars.push(
+      { name: "roll", type: "int", default: 0 },
+      { name: "roll", owner: "quest", type: "int", default: 7 },
+    );
+    const main = p.canvases.main;
+    const setup = createCard("setup", "hub");
+    const line = createCard("line", "line", {
+      speaker: "ent_narrator",
+      text: "Бросок {roll}, +1 {roll + 1}, набор {quest.roll}, число {1 + 2}. Литералы: \\{roll}, {версия 2}, {заметка про roll}, {не условие}.",
+    });
+    const option = createCard("option", "line", { speaker: "ent_player", menuText: "Ход {roll + 1}", text: "Теперь {roll}" });
+    main.cards.push(setup, line, option);
+    Object.assign(main.layout, { setup: { x: 0, y: 0 }, line: { x: 300, y: 0 }, option: { x: 600, y: 0 } });
+    const entry = main.cards.find((card) => card.type === "entry")!;
+    const exit = main.cards.find((card) => card.type === "exit")!;
+    main.links = [
+      { from: entry.id, to: setup.id, order: 0, kind: "divert", direct: true },
+      { from: setup.id, to: line.id, order: 0, kind: "divert", action: "roll = 4" },
+      { from: line.id, to: option.id, order: 0, kind: "divert", action: "roll = 100" },
+      { from: option.id, to: exit.id, order: 0, kind: "divert" },
+    ];
+    const result = checkProject(p);
+    expect(result.diagnostics.filter((diagnostic) => diagnostic.severity === "error")).toEqual([]);
+    expect(result.build.files.get("main.ink")).toContain("{quest__roll}");
+    const story = new Story(result.storyJson!);
+    story.ChoosePathString("main");
+    const text = story.ContinueMaximally();
+    expect(text).toContain("Бросок 4, +1 5, набор 7, число 3. Литералы: {roll}, {версия 2}, {заметка про roll}, {не условие}.");
+    expect(story.currentChoices.map((choice) => choice.text)).toEqual(["Ход 5"]);
+    story.ChooseChoiceIndex(0);
+    expect(story.ContinueMaximally()).toContain("Теперь 100");
   });
 });

@@ -1,6 +1,6 @@
 import type { Canvas, Card, Link, Project, Variable } from "@visink/core";
-import { namespaceName, qualifiedName, namespaceError, flowCards, guessStart, isPlayerCard, isValidInkName, stableStringify } from "@visink/core";
-import { escapeInkText, escapeTagValue } from "./escape";
+import { namespaceName, qualifiedName, namespaceError, flowCards, isPlayerCard, isValidInkName, stableStringify, canvasLocations, prepareProject, isBoundaryCard } from "@visink/core";
+import { escapeInkText, escapeTagValue, mapInkTextExpressions } from "./escape";
 
 export { escapeInkText, escapeTagValue } from "./escape";
 
@@ -111,6 +111,23 @@ export function stitchName(card: Card): string {
 
 export const scopedInkName = (owner: string | undefined, name: string, project?: Project) => owner ? `${project ? namespaceName(project, owner) : owner}__${name}` : name;
 
+export function isLegacyRoot(project: Project, canvas: Canvas): boolean {
+  if (!canvas.legacyId) return false;
+  const location = canvasLocations(project).find((x) => x.canvas === canvas || x.canvas.id === canvas.id);
+  return location?.parent?.canvas.legacyId !== canvas.legacyId;
+}
+
+/** Внешний файл остаётся main.ink; внутренний knot уступает имя старой глобальной переменной/функции main. */
+export function runtimeCanvasId(project: Project, canvas: Canvas): string {
+  if (canvas.id !== "main") return canvas.id;
+  const globals = [...project.variables.vars, ...project.variables.lists, ...project.variables.functions].filter((item) => !item.owner);
+  if (!globals.some((item) => item.name === "main")) return "main";
+  const used = new Set([...globals.map((item) => item.name), ...canvasLocations(project).map((x) => x.canvas.id)]);
+  let id = "__visink_main";
+  for (let n = 2; used.has(id); n++) id = `__visink_main_${n}`;
+  return id;
+}
+
 function replaceLogicToken(text: string, from: string, to: string): string {
   const escaped = from.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   const re = new RegExp(`(?<![\\w.])${escaped}(?![\\w])`, "g");
@@ -130,77 +147,83 @@ export function compileLogic(project: Project, text: string, owner?: string, par
   return out;
 }
 
-/** Визуальные слои одного файла в плоской форме для существующего генератора Ink. */
-export function flattenCanvas(root: Canvas): Canvas {
-  const out: Canvas = { ...root, cards: [], links: [], layout: {}, groups: [], notes: [], graveyard: [] };
-  const visit = (canvas: Canvas) => {
-    for (const card of canvas.cards) {
-      const { flow: _flow, ...plain } = card;
-      out.cards.push(plain);
-      if (canvas.layout[card.id]) out.layout[card.id] = canvas.layout[card.id];
-    }
-    out.links.push(...canvas.links.filter((link) => {
-      const source = canvas.cards.find((card) => card.id === link.from);
-      return source?.type !== "flow" || !source.flow;
-    }));
-    out.notes.push(...canvas.notes);
-    out.groups.push(...canvas.groups);
-    out.graveyard.push(...canvas.graveyard);
-    for (const card of canvas.cards) {
-      if (!card.flow) continue;
-      if (card.type !== "flow") {
-        visit(card.flow);
-        continue;
-      }
-      const nestedStart = out.cards.length;
-      const nestedLinkStart = out.links.length;
-      visit(card.flow);
-      const nestedCards = out.cards.slice(nestedStart);
-      const parentLinks = canvas.links.filter((link) => link.from === card.id);
-      if (!nestedCards.length) {
-        out.links.push(...parentLinks);
-        continue;
-      }
-      const nestedIds = new Set(nestedCards.map((nested) => nested.id));
-      const hasOutgoing = new Set(out.links.slice(nestedLinkStart).filter((link) => nestedIds.has(link.from)).map((link) => link.from));
-      const start = rootCard(card.flow);
-      if (start) out.links.push({ from: card.id, to: start.id, order: 0, kind: "divert" });
-      for (const terminal of nestedCards) {
-        if (hasOutgoing.has(terminal.id)) continue;
-        for (const link of parentLinks) out.links.push({ ...link, from: terminal.id });
-      }
-    }
-  };
-  visit(root);
-  return out;
-}
-
-/** С какой карточки начинается узел файла: явное начало, иначе догадка (см. guessStart). */
+/** Явный «Вход» — единственное начало knot. */
 export function rootCard(canvas: Canvas): Card | undefined {
-  return canvas.cards.find((c) => c.id === canvas.start) ?? guessStart(canvas);
+  return canvas.cards.find((c) => c.type === "entry");
 }
 
-/** Ищет цель перехода "canvas", "canvas.entry" или "canvas.cardId" и возвращает путь ink. */
+function isTextExpression(expression: string, knownNames: Set<string>) {
+  const keywords = new Set(["and", "or", "not", "mod", "true", "false"]);
+  const token = /\s+|"(?:[^"\\]|\\.)*"|[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*|\d+(?:\.\d+)?|<=|>=|==|!=|&&|\|\||[+\-*/%()<>!,]/y;
+  let index = 0;
+  let hasValue = false;
+  let previousValue = false;
+  while (index < expression.length) {
+    token.lastIndex = index;
+    const match = token.exec(expression);
+    if (!match) return false;
+    index = token.lastIndex;
+    const text = match[0];
+    if (/^\s+$/.test(text)) continue;
+    let value = /^["\d]/.test(text);
+    if (/^[A-Za-z_]/.test(text)) {
+      if (!knownNames.has(text) && !keywords.has(text)) return false;
+      value = !["and", "or", "not", "mod"].includes(text);
+    }
+    if (value && previousValue) return false;
+    if (value) hasValue = true;
+    previousValue = value;
+    if (text === "(" || text === ")" || text === ",") previousValue = false;
+  }
+  return hasValue;
+}
+
+function projectTextNames(project: Project) {
+  return new Set([...project.variables.vars, ...project.variables.lists, ...project.variables.functions].map((item) => qualifiedName(project, item)));
+}
+
+/** Применяет правку только к распознанным шаблонам реплик, не экранируя остальной текст. */
+export function mapStoryText(project: Project, text: string, transform: (expression: string) => string) {
+  if (!text.includes("{")) return text;
+  const names = projectTextNames(project);
+  return mapInkTextExpressions(text, (expression) => {
+    if (!isTextExpression(expression, names)) return null;
+    const next = transform(expression);
+    return next === expression ? null : `{${next}}`;
+  });
+}
+
+/** Ищет технический или прежний корневой адрес "canvas", "canvas.entry" или "canvas.cardId". */
 export function resolveTarget(project: Project, target: string): string | null {
   const [canvasId, sub] = target.trim().split(".", 2);
-  const canvas = Object.values(project.canvases).find((c) => c.id === canvasId);
-  if (!canvas) return null;
-  if (!sub) return canvas.id;
-  const cards = flowCards(canvas).map((x) => x.card);
+  const location = canvasLocations(project).find(({ canvas }) => canvas.id === canvasId || canvas.legacyId === canvasId && isLegacyRoot(project, canvas));
+  if (!location) return null;
+  const canvas = location.canvas;
+  const addressId = canvas.legacyId === canvasId ? canvasId : runtimeCanvasId(project, canvas);
+  if (!sub) return addressId;
+  const legacyFamily = isLegacyRoot(project, canvas);
+  const descendants = (root: Canvas): Card[] => root.cards.flatMap((card) => [card, ...(card.flow && card.flow.legacyId === canvas.legacyId ? descendants(card.flow) : [])]);
+  const cards = legacyFamily ? descendants(canvas) : canvas.cards;
   const name = sub.startsWith("entry_") ? sub.slice(6) : sub;
-  if (cards.some((c) => c.entry === name)) return `${canvas.id}.entry_${name}`;
+  if (cards.some((c) => c.entry === name)) return `${addressId}.entry_${name}`;
   const card = cards.find((c) => c.id === sub);
-  if (card) return `${canvas.id}.${stitchName(card)}`;
+  if (card) return `${addressId}.${stitchName(card)}`;
   return null;
 }
 
 export function compileCanvas(project: Project, key: string, source: Canvas, diagnostics: Diagnostic[] = []): CompiledCanvas {
-  const flat = flattenCanvas(source);
+  const location = canvasLocations(project).find((x) => x.canvas === source || x.canvas.id === source.id);
   const compile = (text: string | undefined) => text == null ? undefined : compileLogic(project, text);
+  const textNames = projectTextNames(project);
+  const storyText = (text: string) => escapeInkText(text, (expression) => {
+    if (!isTextExpression(expression, textNames)) return null;
+    return compileLogic(project, expression);
+  });
   const canvas: Canvas = {
-    ...flat,
-    cards: flat.cards.map((card) => ({ ...card, condition: compile(card.condition), action: compile(card.action), ...(card.type === "ink" ? { text: compile(card.text) } : {}) })),
-    links: flat.links.map((link) => ({ ...link, condition: compile(link.condition), action: compile(link.action) })),
+    ...source,
+    id: runtimeCanvasId(project, source),
+    cards: source.cards.map((card) => ({ ...card, condition: compile(card.condition), action: compile(card.action), ...(card.type === "ink" ? { text: compile(card.text) } : {}) })),
+    links: source.links.map((link) => ({ ...link, condition: compile(link.condition), action: compile(link.action) })),
   };
   const seenCards = new Set<string>();
   for (const card of canvas.cards) {
@@ -208,20 +231,57 @@ export function compileCanvas(project: Project, key: string, source: Canvas, dia
     seenCards.add(card.id);
   }
   const byId = new Map(canvas.cards.map((c) => [c.id, c]));
-  const sourceById = new Map(flowCards(source).map(({ card }) => [card.id, card]));
-  const playerOption = (card: Card): Card | undefined => {
-    if (isPlayerCard(project, card)) return card;
-    if (card.type !== "flow") return undefined;
-    const inner = sourceById.get(card.id)?.flow;
-    const start = inner && rootCard(inner);
-    return start ? playerOption(start) : undefined;
-  };
+  const sourceById = new Map(source.cards.map((card) => [card.id, card]));
   const outgoing = new Map<string, Link[]>();
   for (const link of canvas.links) {
     if (!outgoing.has(link.from)) outgoing.set(link.from, []);
     outgoing.get(link.from)!.push(link);
   }
   for (const [k, v] of outgoing) outgoing.set(k, sortLinks(v));
+
+  type OptionRoute = {
+    option: Card;
+    canvas: Canvas;
+    gates: string[];
+    actions: { canvas: string; card: string; action?: string; link?: LinkRef }[];
+  };
+  const linksFrom = (sourceCanvas: Canvas, id: string): Link[] => sourceCanvas === source
+    ? outgoing.get(id) ?? []
+    : sortLinks(sourceCanvas.links.filter((l) => l.from === id)).map((l) => ({ ...l, condition: compile(l.condition), action: compile(l.action) }));
+  /** Не null только для маршрута, который целиком состоит из вложенностей/хабов и вариантов игрока. */
+  const collectOptions = (sourceCanvas: Canvas, target: Card, seen = new Set<string>(), transparent = false): OptionRoute[] | null => {
+    const gate = target.type === "condition" ? "" : compile(target.condition)?.trim() || "";
+    if (isPlayerCard(project, target)) return [{ option: target, canvas: sourceCanvas, gates: gate ? [gate] : [], actions: [] }];
+    if (target.type !== "flow" && (target.type !== "hub" && target.type !== "entry" || !transparent)) return null;
+    const key = `${sourceCanvas.id}.${target.id}`;
+    if (seen.has(key)) return null;
+    const nextSeen = new Set(seen).add(key);
+    const nextCanvas = target.type === "flow" ? target.flow : sourceCanvas;
+    const next = target.type === "flow" ? target.flow && rootCard(target.flow) : target;
+    if (!nextCanvas || !next) return null;
+    const links = linksFrom(nextCanvas, next.id);
+    if (!links.length) return null;
+    const prefix: OptionRoute["actions"] = compile(target.action)?.trim() ? [{ canvas: sourceCanvas.id, card: target.id, action: compile(target.action) }] : [];
+    const out: OptionRoute[] = [];
+    for (const link of links) {
+      const nextTarget = nextCanvas.cards.find((c) => c.id === link.to);
+      if (!nextTarget) return null;
+      const routes = collectOptions(nextCanvas, nextTarget, nextSeen, true);
+      if (!routes) return null;
+      const linkGate = compile(link.condition)?.trim() || "";
+      const linkRef = { from: link.from, to: link.to, ...(link.port ? { port: link.port } : {}) };
+      for (const route of routes) out.push({
+        ...route,
+        gates: [...(gate ? [gate] : []), ...(linkGate ? [linkGate] : []), ...route.gates],
+        actions: [
+          ...prefix,
+          ...(link.action?.trim() ? [{ canvas: nextCanvas.id, card: target.id, action: link.action, link: linkRef }] : []),
+          ...route.actions,
+        ],
+      });
+    }
+    return out.length ? out : null;
+  };
 
   const diag = (severity: Severity, code: string, message: string, card?: string) =>
     diagnostics.push({ severity, code, message, canvas: key, card });
@@ -236,7 +296,7 @@ export function compileCanvas(project: Project, key: string, source: Canvas, dia
   };
 
   /** Строка ink; card и link — куда показывать ошибки в ней (по умолчанию — на текущую карточку). */
-  type Out = string | { text: string; card?: string; link?: LinkRef };
+  type Out = string | { text: string; canvas?: string; card?: string; link?: LinkRef };
 
   const refOf = (l: Link): LinkRef => ({ from: l.from, to: l.to, ...(l.port ? { port: l.port } : {}) });
   const linkCond = (l: Link) => l.condition?.trim() ?? "";
@@ -246,17 +306,19 @@ export function compileCanvas(project: Project, key: string, source: Canvas, dia
     actionLines(l.action).map((text) => ({ text: `    ${text}`, card: from.id, link: refOf(l) }));
 
   const routing = (card: Card, links = outgoing.get(card.id) ?? []): Out[] => {
-    // ветка без продолжения — конец диалога
     if (!links.length) return ["-> DONE"];
+    if (card.type === "entry" && links.length === 1 && links[0].direct) {
+      return [...actionLines(links[0].action).map((text) => ({ text, card: card.id, link: refOf(links[0]) })), divert(links[0].to, card)];
+    }
     const pairs = links.flatMap((l) => {
       const t = byId.get(l.to);
-      return t ? [{ l, t, choice: playerOption(t) }] : [];
+      return t ? [{ l, t, routes: collectOptions(source, t) }] : [];
     });
     if (!pairs.length) return [divert(links[0].to, card)];
-    const players = pairs.filter(({ choice }) => choice);
+    const players = pairs.flatMap(({ l, t, routes }) => routes?.map((route) => ({ l, t, route })) ?? []);
     const condOf = ({ l, t }: { l: Link; t: Card }) => both(gateOf(t), linkCond(l));
     if (players.length) {
-      const ordinary = pairs.filter(({ choice }) => !choice);
+      const ordinary = pairs.filter(({ routes }) => !routes);
       if (ordinary.some((pair) => !condOf(pair))) {
         diag("error", "mixed-links", "При вариантах игрока обычная карточка должна иметь условие на входном пине", card.id);
       }
@@ -269,21 +331,23 @@ export function compileCanvas(project: Project, key: string, source: Canvas, dia
           ? [{ text: `{ ${cond}:`, ...ref }, ...acts, `    ${divert(t.id, card)}`, "}"]
           : [{ text: `{${cond}: ${divert(t.id, card)}}`, ...ref }];
       });
-      const ordered = [...players.filter(({ choice }) => choice!.repeat !== "fallback"), ...players.filter(({ choice }) => choice!.repeat === "fallback")];
-      return [...routes, ...ordered.flatMap(({ l, t, choice }): Out[] => {
-        const option = choice!;
-        const gate = option.id === t.id ? gateOf(t) : both(gateOf(t), gateOf(option));
+      const ordered = [...players.filter(({ route }) => route.option.repeat !== "fallback"), ...players.filter(({ route }) => route.option.repeat === "fallback")];
+      return [...routes, ...ordered.flatMap(({ l, t, route }): Out[] => {
+        const option = route.option;
         const lc = linkCond(l);
-        const conds = [gate, lc].filter(Boolean).map((c) => `{${c}} `).join("");
-        // ошибка в условии — на стрелке, если условие есть на ней, иначе на варианте
-        const ref = { card: lc && !gate ? card.id : t.id, ...(lc ? { link: refOf(l) } : {}) };
-        const head =
-          option.repeat === "fallback" ? `* ${conds}->` : `${option.repeat === "sticky" ? "+" : "*"} ${conds}[${escapeInkText(option.menuText || option.text || "…")}]`;
-        const acts = linkActions(l, card);
-        const target = `-> ${stitchName(t)}`;
-        if (!acts.length) return [{ text: option.repeat === "fallback" ? `${head} ${stitchName(t)}` : `${head} ${target}`, ...ref }];
-        return [{ text: head, ...ref }, ...acts, { text: `    ${target}`, card: t.id }];
-      })];
+        const conditions = [lc, ...route.gates].filter(Boolean);
+        const conds = conditions.map((c) => `{${c}} `).join("");
+        const ref = { canvas: lc ? source.id : route.canvas.id, card: lc ? card.id : option.id, ...(lc ? { link: refOf(l) } : {}) };
+        const head = option.repeat === "fallback" ? `* ${conds}->` : `${option.repeat === "sticky" ? "+" : "*"} ${conds}[${storyText(option.menuText || option.text || "…")}]`;
+        const acts = [
+          ...linkActions(l, card),
+          ...route.actions.flatMap((item) => actionLines(item.action).map((text) => ({ text: `    ${text}`, canvas: item.canvas, card: item.card, ...(item.link ? { link: item.link } : {}) }))),
+        ];
+        const path = route.canvas === source ? stitchName(option) : `${runtimeCanvasId(project, route.canvas)}.${stitchName(option)}`;
+        const target = `-> ${path}`;
+        if (!acts.length) return [{ text: option.repeat === "fallback" ? `${head} ${path}` : `${head} ${target}`, ...ref }];
+        return [{ text: head, ...ref }, ...acts, { text: `    ${target}`, card: option.id }];
+      }), "* -> DONE"];
     }
     if (!condOf(pairs[0])) {
       if (pairs.length > 1) diag("warning", "unreachable-branch", "Несколько стрелок без условия: сработает только первая", card.id);
@@ -312,14 +376,14 @@ export function compileCanvas(project: Project, key: string, source: Canvas, dia
   };
 
   const lineText = (card: Card): string | null => {
-    const text = escapeInkText(card.text ?? "");
+    const text = storyText(card.text ?? "");
     if (!text) {
       if (!isPlayerCard(project, card)) diag("warning", "empty-line", "Пустая реплика", card.id);
       return null;
     }
     const speaker = project.entities.find((e) => e.id === card.speaker);
     const prefix = speaker?.inkName ? `${speaker.inkName}: ` : "";
-    const tags = [`id: ${canvas.id}.${card.id}`];
+    const tags = [`id: ${source.legacyId ?? source.id}.${card.id}`];
     if (speaker) tags.push(`speaker: ${speaker.id}`);
     if (card.emotion) tags.push(`emotion: ${escapeTagValue(card.emotion)}`);
     if (card.stageDirection) tags.push(`dir: ${escapeTagValue(card.stageDirection)}`);
@@ -329,6 +393,34 @@ export function compileCanvas(project: Project, key: string, source: Canvas, dia
     return `${prefix}${text} # ${tags.join(" # ")}`;
   };
 
+  const rawInk = (card: Card): string => {
+    const text = compile(card.text) ?? "";
+    if (!canvas.legacyId) return text;
+    const legacyLocations = canvasLocations(project).filter((x) => x.canvas.legacyId);
+    const targets = new Map<string, string>();
+    for (const location of legacyLocations) {
+      const legacyId = location.canvas.legacyId!;
+      const actualId = runtimeCanvasId(project, location.canvas);
+      for (const target of location.canvas.cards) {
+        const actual = `${actualId}.${stitchName(target)}`;
+        targets.set(`${legacyId}.${target.id}`, actual);
+        if (target.entry) targets.set(`${legacyId}.${target.entry}`, `${actualId}.entry_${target.entry}`);
+        if (legacyId === canvas.legacyId) {
+          const local = location.canvas === source;
+          targets.set(target.id, local ? stitchName(target) : actual);
+          if (target.entry) targets.set(target.entry, local ? `entry_${target.entry}` : `${actualId}.entry_${target.entry}`);
+        }
+      }
+    }
+    const rewrite = (part: string) => {
+      const comment = part.indexOf("//");
+      const code = comment < 0 ? part : part.slice(0, comment);
+      const rest = comment < 0 ? "" : part.slice(comment);
+      return code.replace(/(->\s*)([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)?)(?![\w.])/g, (match, arrow: string, name: string) => targets.has(name) ? `${arrow}${targets.get(name)}` : match) + rest;
+    };
+    return text.split("\n").map((line) => line.split(/("[^"]*")/).map((part, i) => i % 2 ? part : rewrite(part)).join("")).join("\n");
+  };
+
   const body = (card: Card): Out[] => {
     switch (card.type) {
       case "line": {
@@ -336,11 +428,15 @@ export function compileCanvas(project: Project, key: string, source: Canvas, dia
         return [...(line ? [line] : []), ...actionLines(card.action), ...routing(card)];
       }
       case "hub":
+      case "entry":
         return [...actionLines(card.action), ...routing(card)];
+      case "exit": {
+        const parent = location?.parent;
+        return [parent ? `-> ${runtimeCanvasId(project, parent.canvas)}.__visink_continue_${parent.card.id}` : "-> DONE"];
+      }
       case "flow": {
         const inner = sourceById.get(card.id)?.flow;
-        const start = inner && rootCard(inner);
-        return [...actionLines(card.action), ...(start ? [divert(start.id, card)] : routing(card))];
+        return [...actionLines(card.action), ...(inner ? [`-> ${runtimeCanvasId(project, inner)}`] : routing(card))];
       }
       case "condition": {
         const links = outgoing.get(card.id) ?? [];
@@ -370,7 +466,7 @@ export function compileCanvas(project: Project, key: string, source: Canvas, dia
         return [...actionLines(card.action), path ? `-> ${path}` : "-> DONE"];
       }
       case "ink": {
-        const raw = (card.text ?? "").replace(/\s+$/, "");
+        const raw = rawInk(card).replace(/\s+$/, "");
         const lines = raw ? raw.split("\n") : [];
         const links = outgoing.get(card.id) ?? [];
         return links.length ? [...lines, ...routing(card)] : lines;
@@ -382,9 +478,6 @@ export function compileCanvas(project: Project, key: string, source: Canvas, dia
   const order: Card[] = [];
   const visited = new Set<string>();
   const root = rootCard(canvas);
-  if (canvas.cards.length && !canvas.cards.some((c) => c.id === canvas.start)) {
-    diag("warning", "no-start", `У файла не задано начало — диалог начнётся с карточки ${root?.id}`, root?.id);
-  }
   const entries = canvas.cards.filter((c) => c.entry).sort((a, b) => a.entry!.localeCompare(b.entry!) || a.id.localeCompare(b.id));
   const seeds = [...(root ? [root] : []), ...entries];
   const stack = [...seeds].reverse().map((c) => c.id);
@@ -428,16 +521,56 @@ export function compileCanvas(project: Project, key: string, source: Canvas, dia
     for (const line of block) {
       const text = typeof line === "string" ? line : line.text;
       const ref: LineRef =
-        typeof line === "string" ? { canvas: key, card: card.id } : { canvas: key, card: line.card ?? card.id, ...(line.link ? { link: line.link } : {}) };
+        typeof line === "string" ? { canvas: key, card: card.id } : { canvas: line.canvas ?? key, card: line.card ?? card.id, ...(line.link ? { link: line.link } : {}) };
       out.push(text, ref);
       texts.push(text);
     }
     cardInk[card.id] = texts.join("\n");
   }
+  for (const card of canvas.cards.filter((c) => c.flow)) {
+    const block = routing(card);
+    out.push(`= __visink_continue_${card.id}`, { canvas: key, card: card.id });
+    for (const line of block) {
+      out.push(typeof line === "string" ? line : line.text, typeof line === "string" ? { canvas: key, card: card.id } : { canvas: line.canvas ?? key, card: line.card ?? card.id, ...(line.link ? { link: line.link } : {}) });
+    }
+  }
+  if (isLegacyRoot(project, source)) {
+    const aliases: { canvas: Canvas; card: Card }[] = [];
+    const visit = (parent: Canvas) => {
+      for (const owner of parent.cards) {
+        if (!owner.flow || owner.flow.legacyId !== source.legacyId) continue;
+        for (const card of owner.flow.cards) if (!isBoundaryCard(card)) aliases.push({ canvas: owner.flow, card });
+        visit(owner.flow);
+      }
+    };
+    visit(source);
+    for (const alias of aliases) {
+      out.push(`= ${stitchName(alias.card)}`, { canvas: key, card: alias.card.id });
+      out.push(`-> ${runtimeCanvasId(project, alias.canvas)}.${stitchName(alias.card)}`, { canvas: key, card: alias.card.id });
+    }
+    for (const alias of aliases.filter(({ card }) => card.entry).sort((a, b) => a.card.entry!.localeCompare(b.card.entry!))) {
+      out.push(`= entry_${alias.card.entry}`, { canvas: key, card: alias.card.id });
+      out.push(`-> ${runtimeCanvasId(project, alias.canvas)}.${stitchName(alias.card)}`, { canvas: key, card: alias.card.id });
+    }
+    if (source.legacyId && source.legacyId !== source.id) {
+      const own = source.cards.filter((card) => !isBoundaryCard(card)).map((card) => ({ canvas: source, card }));
+      const compatibility = [...own, ...aliases];
+      out.push(`=== ${source.legacyId} ===`);
+      out.push(`-> ${runtimeCanvasId(project, source)}`, { canvas: key });
+      for (const alias of compatibility) {
+        out.push(`= ${stitchName(alias.card)}`, { canvas: key, card: alias.card.id });
+        out.push(`-> ${runtimeCanvasId(project, alias.canvas)}.${stitchName(alias.card)}`, { canvas: key, card: alias.card.id });
+      }
+      for (const alias of compatibility.filter(({ card }) => card.entry).sort((a, b) => a.card.entry!.localeCompare(b.card.entry!))) {
+        out.push(`= entry_${alias.card.entry}`, { canvas: key, card: alias.card.id });
+        out.push(`-> ${runtimeCanvasId(project, alias.canvas)}.${stitchName(alias.card)}`, { canvas: key, card: alias.card.id });
+      }
+    }
+  }
 
   return {
     key,
-    file: `${canvas.id}.ink`,
+    file: `${source.id}.ink`,
     text: out.lines.join("\n") + "\n",
     lineMap: out.map,
     cardInk,
@@ -504,26 +637,42 @@ export function compileGlobals(project: Project, diagnostics: Diagnostic[] = [])
 }
 
 export function buildProject(project: Project): BuildResult {
+  project = prepareProject(structuredClone(project));
   const diagnostics: Diagnostic[] = [];
   const files = new Map<string, string>();
   const lineMaps = new Map<string, (LineRef | null)[]>();
   const canvases: Record<string, CompiledCanvas> = {};
 
-  const keys = Object.keys(project.canvases).sort();
-  const ids = new Map<string, string>();
-  for (const key of keys) {
-    const canvas = project.canvases[key];
-    if (!isValidInkName(canvas.id)) {
-      diagnostics.push({ severity: "error", code: "bad-canvas-id", canvas: key, message: `Имя файла «${canvas.id}»: только латиница, цифры и _` });
+  const locations = canvasLocations(project).sort((a, b) => a.canvas.id.localeCompare(b.canvas.id));
+  const ids = new Set<string>();
+  for (const { canvas } of locations) {
+    const key = canvas.id;
+    const lowerId = canvas.id.toLowerCase();
+    if (!isValidInkName(canvas.id) || lowerId === "globals" || canvas.id !== "main" && lowerId === "main") {
+      diagnostics.push({ severity: "error", code: "bad-canvas-id", canvas: key, message: `Имя файла «${canvas.id}»: недопустимо или зарезервировано (main, globals)` });
     }
-    if (ids.has(canvas.id)) {
-      diagnostics.push({ severity: "error", code: "duplicate-canvas", canvas: key, message: `Файл с именем «${canvas.id}» уже есть` });
+    if (ids.has(lowerId)) diagnostics.push({ severity: "error", code: "duplicate-canvas", canvas: key, message: `Файл с именем «${canvas.id}» уже есть или совпадает по регистру` });
+    ids.add(lowerId);
+    if (canvas.cards.filter((c) => c.type === "entry").length !== 1 || canvas.cards.filter((c) => c.type === "exit").length !== 1) {
+      diagnostics.push({ severity: "error", code: "canvas-boundaries", canvas: key, message: "На холсте должны быть ровно один «Вход» и один «Выход»" });
     }
-    ids.set(canvas.id, key);
     const compiled = compileCanvas(project, key, canvas, diagnostics);
     canvases[key] = compiled;
-    files.set(compiled.file, compiled.text);
-    lineMaps.set(compiled.file, compiled.lineMap);
+    if (canvas.id !== "main") {
+      files.set(compiled.file, compiled.text);
+      lineMaps.set(compiled.file, compiled.lineMap);
+    }
+    if (isLegacyRoot(project, canvas)) {
+      const family = flowCards(canvas).filter(({ canvas: owner, card }) => owner.legacyId === canvas.legacyId && !isBoundaryCard(card));
+      const seenCards = new Set<string>();
+      const seenEntries = new Set<string>();
+      for (const { card } of family) {
+        if (seenCards.has(card.id)) diagnostics.push({ severity: "error", code: "duplicate-card", canvas: key, card: card.id, message: `Id карточки «${card.id}» повторяется в прежнем адресном пространстве` });
+        seenCards.add(card.id);
+        if (card.entry && seenEntries.has(card.entry)) diagnostics.push({ severity: "error", code: "duplicate-entry", canvas: key, card: card.id, message: `Точка входа «${card.entry}» уже есть в файле` });
+        if (card.entry) seenEntries.add(card.entry);
+      }
+    }
   }
 
   const globals = compileGlobals(project, diagnostics);
@@ -537,25 +686,23 @@ export function buildProject(project: Project): BuildResult {
       diagnostics.push({ severity: "error", code: "bad-start", message: `Стартовая точка «${project.settings.start}» не найдена` });
     }
   }
-  const main = [HEADER, "INCLUDE globals.ink", ...keys.map((k) => `INCLUDE ${canvases[k].file}`), "", start ? `-> ${start}` : "-> DONE"];
-  files.set("main.ink", main.join("\n") + "\n");
+  const mainBody = canvases.main.text.slice(HEADER.length + 1);
+  const main = [HEADER, "INCLUDE globals.ink", ...locations.filter(({ canvas }) => canvas.id !== "main").map(({ canvas }) => `INCLUDE ${canvas.id}.ink`), "", `-> ${runtimeCanvasId(project, project.canvases.main)}`, mainBody];
+  files.set("main.ink", main.join("\n"));
+  lineMaps.set("main.ink", [...Array(locations.length - 1 + 4).fill(null), ...canvases.main.lineMap.slice(1)]);
 
   const manifest: Manifest = {
     version: 1,
     start,
-    canvases: keys.map((key) => {
-      const c = project.canvases[key];
-      return {
-        id: c.id,
-        title: c.title,
-        file: canvases[key].file,
-        entries: flowCards(c)
-          .map((x) => x.card)
-          .filter((card) => card.entry)
-          .map((card) => ({ name: card.entry!, path: `${c.id}.entry_${card.entry}` }))
-          .sort((a, b) => a.name.localeCompare(b.name)),
-      };
-    }),
+    canvases: locations.map(({ canvas: c }) => ({
+      id: c.id,
+      title: c.title,
+      file: `${c.id}.ink`,
+      entries: c.cards
+        .filter((card) => card.entry)
+        .map((card) => ({ name: card.entry!, path: resolveTarget(project, `${c.legacyId ?? c.id}.${card.entry}`)! }))
+        .sort((a, b) => a.name.localeCompare(b.name)),
+    })),
     externals: (project.variables.functions ?? [])
       .filter((f) => f.external)
       .map((f) => ({ name: scopedInkName(f.owner, f.name, project), params: f.params, ...(f.description ? { description: f.description } : {}), ...(f.owner ? { owner: f.owner, sourceName: f.name } : {}) })),
@@ -564,11 +711,11 @@ export function buildProject(project: Project): BuildResult {
       .map((e) => ({ id: e.id, name: e.name, inkName: e.inkName, color: e.color, portrait: e.portrait, isPlayer: e.isPlayer })),
     lines: {},
   };
-  for (const key of keys) {
-    const c = project.canvases[key];
-    for (const { card } of flowCards(c)) {
+  for (const { canvas: c } of locations) {
+    for (const card of c.cards) {
       if (card.type !== "line" || !card.text?.trim()) continue;
-      manifest.lines[`${c.id}.${card.id}`] = { canvas: c.id, card: card.id, speaker: card.speaker, text: card.text, emotion: card.emotion };
+      const address = c.legacyId ?? c.id;
+      manifest.lines[`${address}.${card.id}`] = { canvas: address, card: card.id, speaker: card.speaker, text: card.text, emotion: card.emotion };
     }
   }
   files.set("manifest.json", stableStringify(manifest));

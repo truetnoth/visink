@@ -16,7 +16,6 @@ export function Properties() {
   const canvas = root ? canvasAtPath(root, flowPath) : undefined;
   const link = canvas && selectedLink ? canvas.links.find((l) => linkId(l) === selectedLink) : undefined;
   const card = canvas && selection.length === 1 ? canvas.cards.find((c) => c.id === selection[0]) : undefined;
-  const note = canvas && selection.length === 1 ? canvas.notes.find((n) => n.id === selection[0]) : undefined;
   const entity = selectedEntity ? project.entities.find((e) => e.id === selectedEntity) : undefined;
 
   if (inspect || card || selection.length > 1) return null;
@@ -26,8 +25,6 @@ export function Properties() {
         <EntityProps entity={entity} project={project} />
       ) : link && canvas && key ? (
         <LinkProps key={selectedLink} link={link} canvas={canvas} canvasKey={key} project={project} />
-      ) : note ? (
-        <label className="field"><span className="field-label">Заметка</span><textarea aria-label="Заметка" rows={8} value={note.text} onChange={(e) => useStore.getState().editCanvas((c) => { const n = c.notes.find((n) => n.id === note.id); if (n) n.text = e.target.value; })} /></label>
       ) : (
         <>
           {canvas && key && <CanvasProps canvas={canvas} canvasKey={key} project={project} />}

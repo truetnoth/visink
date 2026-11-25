@@ -4,6 +4,7 @@ import type { Connection, Edge, Node, OnConnectEnd, OnConnectStart, OnSelectionC
 import {
   Background,
   BackgroundVariant,
+  ConnectionLineType,
   MarkerType,
   Panel,
   ReactFlow,
@@ -13,11 +14,10 @@ import {
   useNodesState,
   useReactFlow,
 } from "@xyflow/react";
-import { ArrowRightFromLine, ChevronRight, Code, Flag, GitBranch, Layers, LayoutGrid, Magnet, Maximize, MessageSquare, Repeat, StickyNote, Trash2, User } from "lucide-react";
+import { ArrowRightFromLine, ChevronRight, Code, Flag, GitBranch, Grid3X3, Image as ImageIcon, ImageOff, Layers, LayoutGrid, Magnet, Maximize, MessageSquare, Palette, Repeat, StickyNote, Trash2, User } from "lucide-react";
 import type { Card, CardType } from "@visink/core";
-import { canvasAtPath, flowCards, isPlayerCard, linkId } from "@visink/core";
-import { rootCard } from "@visink/compiler";
-import { useStore } from "../store";
+import { canvasAtPath, flowCards, isBoundaryCard, isPlayerCard, linkId } from "@visink/core";
+import { editAtomic, useStore } from "../store";
 import { projectCardLabels, jumpDestination } from "../cardLabels";
 import { mergeEdges, mergeNodes } from "../canvasNodes";
 import {
@@ -33,14 +33,17 @@ import {
   defaultNpc,
   deleteCards,
   deleteLinks,
+  jumpTargetLocation,
   nextSpeaker,
   parseFragment,
   pasteFragment,
   reorderLinks,
+  setCanvasStart,
   snapPoint,
 } from "../ops";
 import { GRID, usePrefs } from "../prefs";
-import { useTheme } from "../theme";
+import { COLORS } from "../panels/fields";
+import { registerCanvasViewport } from "../navigation";
 import { IconButton } from "../ui";
 import { COMPACT_W, isTyping, isCompact } from "./constants";
 import type { CardData, DraftLink, EdgeData, NoteData, PinPoint } from "./constants";
@@ -52,6 +55,39 @@ import type { MenuItem, MenuState, PinEditorState } from "./menus";
 
 const nodeTypes = { card: CardNode, note: NoteNode, draft: DraftNode };
 const edgeTypes = { logic: LogicEdge };
+const HEX_COLOR = /^#[0-9a-f]{6}$/i;
+
+function CustomColor({ value, onCommit }: { value?: string; onCommit: (color: string) => void }) {
+  const fallback = value && HEX_COLOR.test(value) ? value : "#008bb5";
+  const [hex, setHex] = useState(fallback);
+  const native = useRef<HTMLInputElement>(null);
+  useEffect(() => setHex(fallback), [fallback]);
+  useEffect(() => {
+    const input = native.current;
+    if (!input) return;
+    const change = () => {
+      const next = input.value;
+      setHex(next);
+      if (HEX_COLOR.test(next)) onCommit(next);
+    };
+    const cancel = () => setHex(fallback);
+    input.addEventListener("change", change);
+    input.addEventListener("cancel", cancel);
+    return () => {
+      input.removeEventListener("change", change);
+      input.removeEventListener("cancel", cancel);
+    };
+  }, [fallback, onCommit]);
+  const commitHex = () => {
+    if (HEX_COLOR.test(hex)) onCommit(hex.toLowerCase());
+    else setHex(fallback);
+  };
+  return <div className="custom-color">
+    <input ref={native} type="color" aria-label="Выбрать произвольный цвет" value={HEX_COLOR.test(hex) ? hex : fallback} onInput={(e) => setHex(e.currentTarget.value)} onChange={() => {}} />
+    <input className="mono" aria-label="Hex цвета" value={hex} spellCheck={false} autoCapitalize="off" autoCorrect="off" onChange={(e) => setHex(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); commitHex(); } }} />
+    <button type="button" onMouseDown={(e) => e.preventDefault()} onClick={commitHex}>Применить</button>
+  </div>;
+}
 
 function Flow({ flowKey, viewports }: { flowKey: string; viewports: Map<string, { x: number; y: number; zoom: number }> }) {
   const project = useStore((s) => s.project);
@@ -60,11 +96,13 @@ function Flow({ flowKey, viewports }: { flowKey: string; viewports: Map<string, 
   const selection = useStore((s) => s.selection);
   const check = useStore((s) => s.check);
   const focus = useStore((s) => s.focus);
-  const colorMode = useTheme((s) => s.resolved);
+  const viewportRequest = useStore((s) => s.viewportRequest);
   const snap = usePrefs((s) => s.snap);
+  const showGrid = usePrefs((s) => s.showGrid);
+  const showAvatars = usePrefs((s) => s.showAvatars);
   const fontSize = usePrefs((s) => s.cardFontSize);
   const { editCanvas, setSelection, focusCard, requestEdit } = useStore.getState();
-  const { screenToFlowPosition, setCenter, fitView, getViewport } = useReactFlow();
+  const { screenToFlowPosition, setCenter, fitView, getViewport, setViewport } = useReactFlow();
   const wrapper = useRef<HTMLDivElement>(null);
   /** Положение поповера от пина: ограничено рамками холста. */
   const popoverAt = (p: PinPoint, w: number, h: number, dx = 12, dy = 0) => {
@@ -85,11 +123,19 @@ function Flow({ flowKey, viewports }: { flowKey: string; viewports: Map<string, 
     useStore.setState({ pinRequest: null });
   }, [pinRequest]);
   const [menu, setMenu] = useState<MenuState | null>(null);
+  const [colorPicker, setColorPicker] = useState(false);
+  useEffect(() => setColorPicker(false), [key, flowPath, selection]);
 
   const root = project && key ? project.canvases[key] : null;
   const canvas = root ? canvasAtPath(root, flowPath) ?? null : null;
   const initialViewport = useRef(viewports.get(flowKey));
+  useEffect(() => registerCanvasViewport(getViewport), [getViewport]);
   useEffect(() => () => { viewports.set(flowKey, getViewport()); }, [flowKey, getViewport, viewports]);
+  useEffect(() => {
+    if (!viewportRequest || viewportRequest.flowKey !== flowKey) return;
+    void setViewport(viewportRequest.viewport);
+    if (useStore.getState().viewportRequest?.nonce === viewportRequest.nonce) useStore.setState({ viewportRequest: null });
+  }, [flowKey, setViewport, viewportRequest]);
 
   const problems = useMemo(() => {
     const map = new Map<string, { severity: "error" | "warning"; text: string[] }>();
@@ -125,6 +171,14 @@ function Flow({ flowKey, viewports }: { flowKey: string; viewports: Map<string, 
   }, [pinPicker, pinEditor]);
 
   const activeDrafts = useMemo<DraftLink[]>(() => menu?.from ? [{ id: "draft:menu", from: menu.from, ...(menu.port ? { port: menu.port } : {}), x: menu.at.x, y: menu.at.y }] : [], [menu]);
+  const navigateJump = useCallback((target?: string) => {
+    const { project, focusCard } = useStore.getState();
+    if (!project || !target) return false;
+    const location = jumpTargetLocation(project, target);
+    if (!location) return false;
+    focusCard(location.canvas.id, location.card?.id);
+    return true;
+  }, []);
 
   // Выделением владеет React Flow: узлы пересобираются только при правке проекта,
   // неизменённые карточки остаются теми же объектами (см. mergeNodes) — memo не сбрасывается.
@@ -132,7 +186,7 @@ function Flow({ flowKey, viewports }: { flowKey: string; viewports: Map<string, 
     if (!canvas || !project) return [];
     const { targets } = projectCardLabels(project);
     const entities = new Map(project.entities.map((e) => [e.id, e]));
-    const cards: Node<CardData>[] = canvas.cards.map((card) => {
+    const cards: Node<CardData>[] = canvas.cards.filter((card) => flowPath.length > 0 || !isBoundaryCard(card)).map((card) => {
       const pr = problems.get(card.id);
       const compactWidth = COMPACT_W[card.type];
       return {
@@ -146,20 +200,20 @@ function Flow({ flowKey, viewports }: { flowKey: string; viewports: Map<string, 
           targetLabel: card.type === "jump" ? jumpDestination(targets, card.target) : undefined,
           speaker: card.speaker ? entities.get(card.speaker) : undefined,
           player: isPlayerCard(project, card),
-          isStart: canvas.start === card.id,
           fixedHeight: compactWidth == null && canvas.layout[card.id]?.h != null,
           problem: pr?.severity,
           problemText: pr?.text.join("\n"),
           problemCount: pr?.text.length,
           onPin,
           onBranch,
+          onNavigate: navigateJump,
         },
       };
     });
-    const notes: Node<NoteData>[] = canvas.notes.map((n) => ({ id: n.id, type: "note", position: { x: n.x, y: n.y }, width: n.w ?? 200, ...(n.h != null ? { height: n.h } : {}), data: { id: n.id, text: n.text } }));
+    const notes: Node<NoteData>[] = canvas.notes.map((n) => ({ id: n.id, type: "note", position: { x: n.x, y: n.y }, width: n.w ?? 200, ...(n.h != null ? { height: n.h } : {}), data: { id: n.id, text: n.text, color: n.color } }));
     const placeholders: Node[] = activeDrafts.map((draft) => ({ id: draft.id, type: "draft", position: { x: draft.x, y: draft.y }, selectable: false, deletable: false, data: {} }));
     return [...notes, ...cards, ...placeholders];
-  }, [canvas, project, problems, activeDrafts, onPin, onBranch]);
+  }, [canvas, project, problems, activeDrafts, onPin, onBranch, navigateJump, flowPath]);
 
   // Начальное выделение нужно до первого события React Flow при переходе из дерева.
   const [nodes, setNodes, onNodesChange] = useNodesState<Node>(derivedNodes.map((node) => ({ ...node, selected: selection.includes(node.id) })));
@@ -181,14 +235,15 @@ function Flow({ flowKey, viewports }: { flowKey: string; viewports: Map<string, 
 
   const derivedEdges = useMemo<Edge<EdgeData>[]>(() => {
     if (!canvas) return [];
-    const real = canvas.links.map((l): Edge<EdgeData> => {
+    const hidden = new Set(flowPath.length ? [] : canvas.cards.filter(isBoundaryCard).map((card) => card.id));
+    const real = canvas.links.filter((link) => !hidden.has(link.from) && !hidden.has(link.to)).map((l): Edge<EdgeData> => {
       const id = linkId(l);
       const error = badLinks.has(id);
       return { id, type: "logic", source: l.from, target: l.to, sourceHandle: l.port ?? null, markerEnd: { type: MarkerType.ArrowClosed }, className: [l.port ? `edge-${l.port}` : "", error ? "edge-error" : ""].join(" ").trim() || undefined, data: { condition: l.condition, action: l.action, error } };
     });
     const temporary = activeDrafts.map((d): Edge<EdgeData> => ({ id: `draft-edge:${d.id}`, type: "logic", source: d.from, target: d.id, sourceHandle: d.port ?? null, markerEnd: { type: MarkerType.ArrowClosed }, className: "edge-draft", selectable: false, deletable: false, data: { draft: true } }));
     return [...real, ...temporary];
-  }, [canvas, badLinks, activeDrafts]);
+  }, [canvas, badLinks, activeDrafts, flowPath]);
 
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge<EdgeData>>(derivedEdges.map((edge) => ({ ...edge, selected: useStore.getState().selectedLinks.includes(edge.id) })));
   useEffect(() => {
@@ -391,18 +446,12 @@ function Flow({ flowKey, viewports }: { flowKey: string; viewports: Map<string, 
 
   const onNodeClick = useCallback(
     (e: React.MouseEvent, node: Node) => {
-      if (node.type !== "card") return;
-      if (!(e.ctrlKey || e.metaKey)) return;
+      setColorPicker(false);
+      if (node.type !== "card" || !(e.ctrlKey || e.metaKey)) return;
       const card = (node.data as CardData).card;
-      if (card.type !== "jump" || !card.target || !project) return;
-      const [canvasId, sub] = card.target.split(".");
-      const entry = Object.entries(project.canvases).find(([, c]) => c.id === canvasId);
-      if (!entry) return;
-      const [targetKey, target] = entry;
-      const targetCard = flowCards(target).map((x) => x.card).find((c) => c.id === sub || (c.entry && (c.entry === sub || `entry_${c.entry}` === sub))) ?? rootCard(target);
-      focusCard(targetKey, targetCard?.id);
+      if (card.type === "jump") navigateJump(card.target);
     },
-    [project, focusCard],
+    [navigateJump],
   );
 
   const createAt = useCallback(
@@ -442,7 +491,12 @@ function Flow({ flowKey, viewports }: { flowKey: string; viewports: Map<string, 
   // Enter / Tab на выделенной карточке
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (useStore.getState().view !== "canvas" || isTyping()) return;
+      if (useStore.getState().view !== "canvas" || isTyping() || e.defaultPrevented) return;
+      if (e.key === "Escape" && colorPicker) {
+        e.preventDefault();
+        setColorPicker(false);
+        return;
+      }
       if (e.key === "Escape" && (pinPicker || pinEditor)) {
         e.preventDefault();
         setPinPicker(null);
@@ -461,6 +515,7 @@ function Flow({ flowKey, viewports }: { flowKey: string; viewports: Map<string, 
       }
       const { selection, project, activeCanvas, flowPath: path } = useStore.getState();
       if (!selection.length || !project || !activeCanvas) return;
+      if ((e.key === "Enter" || e.key === "Tab") && e.target instanceof Element && e.target.closest("button")) return;
       if ((e.key === "Enter" || e.key === "Tab") && selection.length === 1) {
         e.preventDefault();
         const id = selection[0];
@@ -481,7 +536,7 @@ function Flow({ flowKey, viewports }: { flowKey: string; viewports: Map<string, 
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [editCanvas, setSelection, setCenter, requestEdit, fitView, pinPicker, pinEditor, openMenu]);
+  }, [editCanvas, setSelection, setCenter, requestEdit, fitView, pinPicker, pinEditor, openMenu, colorPicker]);
 
   // Ctrl+C / Ctrl+X / Ctrl+V: карточки и заметки со стрелками между ними — через системный буфер,
   // поэтому можно вставлять в другой файл и даже в другое окно. В полях ввода — обычный текст.
@@ -522,6 +577,22 @@ function Flow({ flowKey, viewports }: { flowKey: string; viewports: Map<string, 
   }, [editCanvas, setSelection, screenToFlowPosition]);
 
   if (!canvas) return <div className="empty-state">Выберите или создайте файл слева</div>;
+  const menuCard = cardMenu ? canvas.cards.find((card) => card.id === cardMenu.id) : undefined;
+  const selectedId = selection.length === 1 ? selection[0] : undefined;
+  const selectedCard = canvas.cards.find((card) => card.id === selectedId);
+  const selectedNote = canvas.notes.find((note) => note.id === selectedId);
+  const colorTarget = selectedCard && ["flow", "hub", "jump"].includes(selectedCard.type) ? selectedCard : selectedNote;
+  const selectionActions = colorTarget ? [{ id: "color", label: "Цвет", icon: Palette, active: colorPicker, run: () => setColorPicker((open) => !open) }] : [];
+  const applyColor = (color: string) => {
+    if (!selectedId) return;
+    editAtomic((project) => {
+      const { activeCanvas, flowPath } = useStore.getState();
+      const current = activeCanvas ? canvasAtPath(project.canvases[activeCanvas], flowPath) : undefined;
+      const target = current?.cards.find((card) => card.id === selectedId) ?? current?.notes.find((note) => note.id === selectedId);
+      if (target) target.color = color;
+    });
+    setColorPicker(false);
+  };
 
   return (
     <div
@@ -545,6 +616,8 @@ function Flow({ flowKey, viewports }: { flowKey: string; viewports: Map<string, 
         onNodesChange={onNodesChange}
         onEdgesChange={onEdgesChange}
         connectionRadius={60}
+        connectionLineType={ConnectionLineType.Straight}
+        connectionLineStyle={{ stroke: "var(--accent)", strokeWidth: 2.25 }}
         connectOnClick={false}
         selectionMode={SelectionMode.Partial}
         onNodeContextMenu={onNodeContextMenu}
@@ -565,6 +638,7 @@ function Flow({ flowKey, viewports }: { flowKey: string; viewports: Map<string, 
           setCardMenu(null);
           setPinPicker(null);
           setPinEditor(null);
+          setColorPicker(false);
           useStore.getState().clearInspector();
         }}
         proOptions={{ hideAttribution: true }}
@@ -580,9 +654,9 @@ function Flow({ flowKey, viewports }: { flowKey: string; viewports: Map<string, 
         zoomOnPinch
         multiSelectionKeyCode={["Shift", "Meta", "Control"]}
         minZoom={0.1}
-        colorMode={colorMode}
+        colorMode="dark"
       >
-        <Background variant={BackgroundVariant.Lines} gap={20} />
+        {showGrid && <Background variant={BackgroundVariant.Lines} gap={20} />}
         <Panel position="top-left" className="palette">
           <IconButton icon={MessageSquare} label="Реплика" onClick={() => createAt("line")} />
           <IconButton icon={User} label="Вариант игрока" onClick={() => createAt("player")} />
@@ -594,6 +668,19 @@ function Flow({ flowKey, viewports }: { flowKey: string; viewports: Map<string, 
           <IconButton icon={StickyNote} label="Заметка" onClick={() => createAt("note")} />
           <span className="toolbar-sep" />
           <IconButton icon={Magnet} className={`toggle ${snap ? "on" : ""}`} label={snap ? "Привязка к сетке" : "Свободное перемещение"} onClick={() => usePrefs.getState().set({ snap: !snap })} />
+          <IconButton icon={Grid3X3} className={`toggle ${showGrid ? "on" : ""}`} label={showGrid ? "Скрыть сетку" : "Показать сетку"} onClick={() => usePrefs.getState().set({ showGrid: !showGrid })} />
+          <IconButton icon={showAvatars ? ImageOff : ImageIcon} className={`toggle ${showAvatars ? "on" : ""}`} label={showAvatars ? "Скрыть аватарки" : "Показать аватарки"} onClick={() => usePrefs.getState().set({ showAvatars: !showAvatars })} />
+          {selectionActions.map((action) => <IconButton key={action.id} icon={action.icon} className={`toggle ${action.active ? "on" : ""}`} label={action.label} onClick={action.run} />)}
+          {colorPicker && colorTarget && <div className="selection-color-picker nodrag nopan" onMouseDown={(e) => e.stopPropagation()} onKeyDown={(e) => {
+            e.stopPropagation();
+            if (e.key === "Escape") {
+              e.preventDefault();
+              setColorPicker(false);
+            }
+          }}>
+            <div className="selection-color-swatches">{COLORS.map((color) => <button key={color} className="color-choice" aria-label={`Цвет ${color}`} aria-pressed={colorTarget.color === color} title={color} onClick={() => applyColor(color)}><span className="swatch" style={{ background: color }} /></button>)}</div>
+            <CustomColor value={colorTarget.color} onCommit={applyColor} />
+          </div>}
         </Panel>
       </ReactFlow>
       {pinPicker && <div className="create-menu pin-count-menu" style={popoverAt(pinPicker, 70, 170)} onContextMenu={(e) => e.preventDefault()}>
@@ -615,23 +702,23 @@ function Flow({ flowKey, viewports }: { flowKey: string; viewports: Map<string, 
         });
         setPinEditor(null);
       }} /></div>}
-      {cardMenu && canvas && <CreateMenu key={`card:${cardMenu.id}`} menu={{ x: cardMenu.x, y: cardMenu.y, at: { x: 0, y: 0 } }} items={[
+      {cardMenu && menuCard && <CreateMenu key={`card:${cardMenu.id}`} menu={{ x: cardMenu.x, y: cardMenu.y, at: { x: 0, y: 0 } }} items={[
+        ...(flowPath.length === 0 && !isBoundaryCard(menuCard) ? [{ label: "Сделать началом канваса", icon: Flag, run: () => editCanvas((c) => setCanvasStart(c, cardMenu.id)) }] : []),
         { label: "Дополнительная точка входа", icon: Flag, run: () => useStore.getState().openCardControl(cardMenu.id, "entry") },
         ...(canvas.cards.some((c) => (selection.includes(cardMenu.id) ? selection.includes(c.id) : c.id === cardMenu.id) && isPlayerCard(project!, c)) ? [{ label: "Тип ответа выбранных реплик", icon: Repeat, run: () => useStore.getState().openCardControl(cardMenu.id, "repeat") }] : []),
-        ...(canvas.cards.find((c) => c.id === cardMenu.id)?.type === "jump" ? [{ label: "Действие перехода", icon: Code, run: () => onPin(cardMenu.id, "action", { x: cardMenu.x, y: cardMenu.y }) }] : []),
-        ...(canvas.cards.find((c) => c.id === cardMenu.id)?.flow ? [{ label: "Открыть вложенность", icon: Layers, run: () => {
+        ...(menuCard.type === "jump" ? [{ label: "Действие перехода", icon: Code, run: () => onPin(cardMenu.id, "action", { x: cardMenu.x, y: cardMenu.y }) }] : []),
+        ...(menuCard.flow ? [{ label: "Открыть вложенность", icon: Layers, run: () => {
           if (key) useStore.getState().setActiveCanvas(key, [...flowPath, cardMenu.id]);
         } }] : []),
-        { label: canvas.start === cardMenu.id ? "Уже начало файла" : "Сделать началом файла", icon: Flag, run: () => editCanvas((c) => (c.start = cardMenu.id)) },
-        ...(canvas.layout[cardMenu.id]?.w != null && !isCompact(canvas.cards.find((c) => c.id === cardMenu.id)?.type) ? [{ label: "Вернуть автоматический размер", icon: Maximize, run: () => editCanvas((c) => { const { x, y } = c.layout[cardMenu.id]; c.layout[cardMenu.id] = { x, y }; }) }] : []),
-        { label: "Удалить карточку", icon: Trash2, run: () => { editCanvas((c) => deleteCards(c, [cardMenu.id])); setSelection([]); } },
+        ...(canvas.layout[cardMenu.id]?.w != null && !isCompact(menuCard.type) ? [{ label: "Вернуть автоматический размер", icon: Maximize, run: () => editCanvas((c) => { const { x, y } = c.layout[cardMenu.id]; c.layout[cardMenu.id] = { x, y }; }) }] : []),
+        ...(!isBoundaryCard(menuCard) ? [{ label: "Удалить", icon: Trash2, run: () => { editCanvas((c) => deleteCards(c, [cardMenu.id])); setSelection([]); } }] : []),
       ]} onPick={(item) => { setCardMenu(null); item.run?.(); }} onClose={() => setCardMenu(null)} />}
       {menu && <CreateMenu key={`${menu.x}:${menu.y}:${menu.count ?? 1}`} menu={menu} items={menuItems} onPick={pickMenu} onClose={closeMenu} />}
     </div>
   );
 }
 
-export function CanvasView() {
+function CanvasSession() {
   const key = useStore((s) => s.activeCanvas);
   const flowPath = useStore((s) => s.flowPath);
   const flowKey = `${key ?? ""}:${flowPath.join("/")}`;
@@ -641,4 +728,9 @@ export function CanvasView() {
       <Flow flowKey={flowKey} viewports={viewports.current} />
     </ReactFlowProvider>
   );
+}
+
+export function CanvasView() {
+  const session = useStore((s) => s.projectSession);
+  return <CanvasSession key={session} />;
 }

@@ -1,7 +1,7 @@
 import { qualifiedName } from "@visink/core";
 // Общий поиск по проекту: файлы, карточки, стрелки, персонажи, переменные, списки.
 import type { Canvas, Project } from "@visink/core";
-import { flowCards } from "@visink/core";
+import { flowCards, isBoundaryCard } from "@visink/core";
 
 export type HitKind = "scope" | "file" | "card" | "link" | "entity" | "var" | "list" | "func";
 
@@ -52,7 +52,7 @@ export function searchProject(project: Project, query: string): Map<HitKind, Hit
   }
   for (const [key, c] of files) {
     for (const { card, path } of flowCards(c)) {
-      if (!has(card.text, card.menuText, card.condition, card.action, card.id, card.entry, card.target, card.note)) continue;
+      if (isBoundaryCard(card) || !has(card.text, card.menuText, card.condition, card.action, card.id, card.entry, card.target, card.note)) continue;
       const speaker = project.entities.find((e) => e.id === card.speaker)?.name;
       push({
         kind: "card",
@@ -65,7 +65,9 @@ export function searchProject(project: Project, query: string): Map<HitKind, Hit
     }
     const visitLinks = (flow: Canvas, path: string[]) => {
       for (const l of flow.links) {
-        if (!has(l.condition, l.action)) continue;
+        const from = flow.cards.find((card) => card.id === l.from);
+        const to = flow.cards.find((card) => card.id === l.to);
+        if ((from && isBoundaryCard(from)) || (to && isBoundaryCard(to)) || !has(l.condition, l.action)) continue;
         push({
           kind: "link",
           title: [l.condition && `{${l.condition}}`, l.action && `~ ${l.action}`].filter(Boolean).join(" "),

@@ -2,6 +2,7 @@
 import { useState } from "react";
 import { ChevronDown, ChevronUp } from "lucide-react";
 import { useStore } from "../store";
+import { canvasAtPath, canvasLocations } from "@visink/core";
 import { IconButton } from "../ui";
 
 type BottomTab = "problems" | "ink" | "globals" | "main" | "manifest";
@@ -11,13 +12,14 @@ export function BottomPanel({ splitter, open, onToggle }: { splitter?: React.Rea
   const check = useStore((s) => s.check);
   const project = useStore((s) => s.project)!;
   const key = useStore((s) => s.activeCanvas);
+  const flowPath = useStore((s) => s.flowPath);
   const focusCard = useStore.getState().focusCard;
   const diags = check?.diagnostics ?? [];
   const errors = diags.filter((d) => d.severity === "error").length;
   const file =
     tab === "ink"
       ? key
-        ? check?.build.canvases[key]?.text
+        ? check?.build.canvases[canvasAtPath(project.canvases[key], flowPath)?.id ?? key]?.text
         : ""
       : tab === "globals"
         ? check?.build.files.get("globals.ink")
@@ -64,7 +66,7 @@ export function BottomPanel({ splitter, open, onToggle }: { splitter?: React.Rea
                   {d.func && <span className="muted mono">функция {d.func}</span>}
                   {d.canvas && (
                     <span className="muted">
-                      {project.canvases[d.canvas]?.title ?? d.canvas}
+                      {canvasLocations(project).find(({ canvas }) => canvas.id === d.canvas || canvas.legacyId === d.canvas)?.canvas.title ?? d.canvas}
                       {d.card ? ` · ${d.card}` : ""}
                     </span>
                   )}

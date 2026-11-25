@@ -4,13 +4,14 @@ import { create } from "zustand";
 import { produce } from "immer";
 import { temporal } from "zundo";
 import type { Canvas, FlowPath, Project, ProjectFs } from "@visink/core";
-import { canvasAtPath, createProject, flowCards, linkId, loadProject, saveProject, writeBuild } from "@visink/core";
+import { canvasAtPath, createProject, flowCards, linkId, loadProject, saveProject, writeBuild, prepareProject, canvasLocations } from "@visink/core";
 import type { CheckResult } from "@visink/checker";
 import { checkInBackground } from "./checkClient";
 import { BrowserFs, pickDirectory } from "./browserFs";
 import { TauriFs, askUser, inTauri, pickTauriDirectory } from "./tauriFs";
 import { usePrefs } from "./prefs";
 import { endTreeDrag, syncTreeDragProject } from "./treeDrag";
+import { currentCanvasViewport, type CanvasViewport } from "./navigation";
 
 /** Папка на диске: в браузере — File System Access, в приложении — команды Rust. */
 export type FolderFs = ProjectFs & { readonly name: string };
@@ -48,12 +49,13 @@ async function pickFolder(id: string, title: string): Promise<FolderFs | null> {
 
 interface State {
   project: Project | null;
+  projectSession: number;
   fs: FolderFs | null;
   /** внешняя папка сборки (например, в проекте Godot); иначе — project.settings.buildDir внутри проекта */
   buildFs: FolderFs | null;
   activeCanvas: string | null;
   flowPath: FlowPath;
-  view: "canvas" | "logic" | "characters" | "testing";
+  view: "canvas" | "logic" | "characters" | "testing" | "stats";
   editorOpen: boolean;
   selection: string[];
   /** выделенная стрелка: id ребра "from>to>port" */
@@ -73,6 +75,9 @@ interface State {
   /** новую карточку сразу открыть на ввод текста */
   editRequest: { card: string; nonce: number } | null;
   pinRequest: { card: string; field: "condition" | "action"; nonce: number } | null;
+  navBackCount: number;
+  navForwardCount: number;
+  viewportRequest: { flowKey: string; viewport: CanvasViewport; nonce: number } | null;
 
   edit: (fn: (p: Project) => void) => void;
   editCanvas: (fn: (c: Canvas, p: Project) => void) => void;
@@ -91,6 +96,8 @@ interface State {
   /** открыть файл и выделить стрелку */
   focusLink: (canvas: string, link: { from: string; to: string; port?: string }) => void;
   focusCard: (canvas: string, card?: string) => void;
+  navigateBack: () => void;
+  navigateForward: () => void;
   /**
    * picked — уже выбранная папка: handle (автотесты через OPFS) или путь (приложение, последний проект);
    * иначе спросит у пользователя.
@@ -110,10 +117,105 @@ let saving = false;
 /** Отложенная запись шага отмены — сбрасывается перед undo/redo. */
 let flushHistory: (() => void) | null = null;
 
+type NavigationEntry = Pick<State, "view" | "activeCanvas" | "flowPath" | "selection" | "selectedLink" | "selectedLinks" | "selectedEntity" | "logicOwner" | "inspect"> & { viewport?: CanvasViewport };
+let navigationPast: NavigationEntry[] = [];
+let navigationFuture: NavigationEntry[] = [];
+
+function navigationSnapshot(state: State): NavigationEntry {
+  return {
+    view: state.view,
+    activeCanvas: state.activeCanvas,
+    flowPath: [...state.flowPath],
+    selection: [...state.selection],
+    selectedLink: state.selectedLink,
+    selectedLinks: [...state.selectedLinks],
+    selectedEntity: state.selectedEntity,
+    logicOwner: state.logicOwner,
+    inspect: state.inspect ? { ...state.inspect } : null,
+    ...(state.view === "canvas" ? { viewport: currentCanvasViewport() } : {}),
+  };
+}
+
+function sameNavigation(a: NavigationEntry, b: NavigationEntry) {
+  return a.view === b.view && a.activeCanvas === b.activeCanvas && a.selectedLink === b.selectedLink && a.selectedEntity === b.selectedEntity && a.logicOwner === b.logicOwner
+    && a.flowPath.join("/") === b.flowPath.join("/") && a.selection.join("\0") === b.selection.join("\0") && a.selectedLinks.join("\0") === b.selectedLinks.join("\0")
+    && a.inspect?.kind === b.inspect?.kind && a.inspect?.name === b.inspect?.name && a.inspect?.owner === b.inspect?.owner;
+}
+
+function syncNavigationCounts() {
+  useStore.setState({ navBackCount: navigationPast.length, navForwardCount: navigationFuture.length });
+}
+
+function navigateTo(get: () => State, next: Partial<State>) {
+  const current = navigationSnapshot(get());
+  const candidate: NavigationEntry = { ...current, ...next };
+  if (sameNavigation(current, candidate)) {
+    useStore.setState({ ...next, viewportRequest: null });
+    return;
+  }
+  navigationPast.push(current);
+  if (navigationPast.length > 100) navigationPast.shift();
+  navigationFuture = [];
+  syncNavigationCounts();
+  useStore.setState({ ...next, viewportRequest: null });
+}
+
+function validNavigation(project: Project, entry: NavigationEntry): NavigationEntry | null {
+  if (entry.selectedEntity && !project.entities.some((entity) => entity.id === entry.selectedEntity)) return null;
+  if (entry.logicOwner && !project.variables.sets?.some((set) => set.id === entry.logicOwner)) return null;
+  if (entry.activeCanvas && !project.canvases[entry.activeCanvas]) return null;
+  const canvas = entry.activeCanvas ? canvasAtPath(project.canvases[entry.activeCanvas], entry.flowPath) : undefined;
+  if (entry.activeCanvas && !canvas) return null;
+  const selection = canvas ? entry.selection.filter((id) => canvas.cards.some((card) => card.id === id) || canvas.notes.some((note) => note.id === id)) : [];
+  const selectedLinks = canvas ? entry.selectedLinks.filter((id) => canvas.links.some((link) => linkId(link) === id)) : [];
+  let inspect = entry.inspect ? { ...entry.inspect } : null;
+  if (inspect) {
+    const collection = inspect.kind === "var" ? project.variables.vars : inspect.kind === "list" ? project.variables.lists : project.variables.functions;
+    if (!collection.some((item) => item.name === inspect!.name && item.owner === inspect!.owner)) inspect = null;
+  }
+  return { ...entry, selection, selectedLinks, selectedLink: entry.selectedLink && selectedLinks.includes(entry.selectedLink) ? entry.selectedLink : null, inspect };
+}
+
+function restoreNavigation(get: () => State, direction: "back" | "forward") {
+  const project = get().project;
+  if (!project) return;
+  const source = direction === "back" ? navigationPast : navigationFuture;
+  let target: NavigationEntry | null = null;
+  while (source.length && !target) {
+    const candidate = source.pop()!;
+    target = validNavigation(project, candidate);
+  }
+  if (!target) {
+    syncNavigationCounts();
+    return;
+  }
+  const current = navigationSnapshot(get());
+  (direction === "back" ? navigationFuture : navigationPast).push(current);
+  const viewportRequest = target.view === "canvas" && target.activeCanvas && target.viewport
+    ? { flowKey: `${target.activeCanvas}:${target.flowPath.join("/")}`, viewport: target.viewport, nonce: Date.now() }
+    : null;
+  const { viewport: _viewport, ...location } = target;
+  useStore.setState({
+    ...location,
+    editorOpen: false,
+    cardControl: null,
+    focus: null,
+    viewportRequest,
+  });
+  syncNavigationCounts();
+}
+
+function resetNavigation() {
+  navigationPast = [];
+  navigationFuture = [];
+  useStore.setState({ navBackCount: 0, navForwardCount: 0, viewportRequest: null });
+}
+
 export const useStore = create<State>()(
   temporal(
     (set, get) => ({
       project: null,
+      projectSession: 0,
       fs: null,
       buildFs: null,
       activeCanvas: null,
@@ -133,6 +235,9 @@ export const useStore = create<State>()(
       editRequest: null,
       pinRequest: null,
       cardControl: null,
+      navBackCount: 0,
+      navForwardCount: 0,
+      viewportRequest: null,
 
       edit(fn) {
         const project = get().project;
@@ -153,12 +258,12 @@ export const useStore = create<State>()(
         });
       },
 
-      setActiveCanvas: (key, flowPath = []) => set({ activeCanvas: key, flowPath, view: "canvas", editorOpen: false, cardControl: null, selection: [], selectedLink: null, selectedLinks: [], selectedEntity: null, inspect: null }),
-      setView: (view) => set({ view, editorOpen: false, cardControl: null }),
+      setActiveCanvas: (key, flowPath = []) => navigateTo(get, { activeCanvas: key, flowPath, view: "canvas", editorOpen: false, cardControl: null, selection: [], selectedLink: null, selectedLinks: [], selectedEntity: null, inspect: null }),
+      setView: (view) => navigateTo(get, { view, editorOpen: false, cardControl: null }),
       openEditor: () => {
         const s = get();
         const c = s.project && s.activeCanvas ? canvasAtPath(s.project.canvases[s.activeCanvas], s.flowPath) : null;
-        if (s.inspect || s.selection.some((id) => c?.cards.some((card) => card.id === id))) return;
+        if (s.inspect || s.selection.some((id) => c?.cards.some((card) => card.id === id) || c?.notes.some((note) => note.id === id))) return;
         set({ editorOpen: true, cardControl: null });
       },
       closeEditor: () => set({ editorOpen: false }),
@@ -181,20 +286,21 @@ export const useStore = create<State>()(
           inspect: picked ? null : state.inspect,
         });
       },
-      selectEntity: (id) => set({ selectedEntity: id, view: "characters", editorOpen: false, cardControl: null, inspect: null, selection: [], selectedLink: null, selectedLinks: [] }),
+      selectEntity: (id) => navigateTo(get, { selectedEntity: id, view: "characters", editorOpen: false, cardControl: null, inspect: null, selection: [], selectedLink: null, selectedLinks: [] }),
       clearInspector: () => set({ cardControl: null, editorOpen: false, selectedLink: null, selectedLinks: [] }),
-      selectLogicScope: (owner) => set({ logicOwner: owner, view: "logic", selectedEntity: null, inspect: null, editorOpen: false, cardControl: null, selection: [], selectedLink: null, selectedLinks: [] }),
+      selectLogicScope: (owner) => navigateTo(get, { logicOwner: owner, view: "logic", selectedEntity: null, inspect: null, editorOpen: false, cardControl: null, selection: [], selectedLink: null, selectedLinks: [] }),
       inspectVariable: (kind, name, owner) => {
         const entity = get().project?.entities.some((e) => e.id === owner);
-        set({ inspect: name ? { kind, name, owner } : null, view: entity ? "characters" : "logic", logicOwner: entity ? null : owner ?? null, selectedEntity: entity ? owner! : null, editorOpen: false, cardControl: null, selection: [], selectedLink: null, selectedLinks: [] });
+        navigateTo(get, { inspect: name ? { kind, name, owner } : null, view: entity ? "characters" : "logic", logicOwner: entity ? null : owner ?? null, selectedEntity: entity ? owner! : null, editorOpen: false, cardControl: null, selection: [], selectedLink: null, selectedLinks: [] });
       },
       focusLink: (canvas, link) => {
-        const root = get().project?.canvases[canvas];
-        const flowPath = root ? flowCards(root).find((x) => x.card.id === link.from)?.path ?? [] : [];
+        const project = get().project;
+        const location = project && canvasLocations(project).find((x) => (x.canvas.id === canvas || x.canvas.legacyId === canvas) && x.canvas.cards.some((card) => card.id === link.from));
+        if (!project || !location) return;
         const id = linkId(link);
-        set({
-          activeCanvas: canvas,
-          flowPath,
+        navigateTo(get, {
+          activeCanvas: "main",
+          flowPath: location.path,
           view: "canvas",
           editorOpen: false,
           cardControl: null,
@@ -203,15 +309,20 @@ export const useStore = create<State>()(
           selectedLinks: [id],
           inspect: null,
           selectedEntity: null,
-          focus: { canvas, card: link.from, nonce: Date.now() },
+          focus: { canvas: "main", card: link.from, nonce: Date.now() },
         });
       },
       focusCard: (canvas, card) => {
-        const root = get().project?.canvases[canvas];
-        const flowPath = root && card ? flowCards(root).find((x) => x.card.id === card)?.path ?? [] : [];
-        set({
-          activeCanvas: canvas,
-          flowPath,
+        const project = get().project;
+        if (!project) return;
+        const locations = canvasLocations(project);
+        const location = card
+          ? locations.find((x) => (x.canvas.id === canvas || x.canvas.legacyId === canvas) && x.canvas.cards.some((item) => item.id === card))
+          : locations.find((x) => x.canvas.id === canvas || x.canvas.legacyId === canvas && x.canvas.id === x.canvas.legacyId);
+        if (!location) return;
+        navigateTo(get, {
+          activeCanvas: "main",
+          flowPath: location.path,
           view: "canvas",
           editorOpen: false,
           cardControl: null,
@@ -219,9 +330,11 @@ export const useStore = create<State>()(
           selectedLink: null, selectedLinks: [],
           inspect: null,
           selectedEntity: null,
-          focus: card ? { canvas, card, nonce: Date.now() } : null,
+          focus: card ? { canvas: "main", card, nonce: Date.now() } : null,
         });
       },
+      navigateBack: () => restoreNavigation(get, "back"),
+      navigateForward: () => restoreNavigation(get, "forward"),
 
       async openProject(createNew, picked) {
         try {
@@ -254,9 +367,10 @@ export const useStore = create<State>()(
           endTreeDrag();
           set({
             project,
+            projectSession: get().projectSession + 1,
             fs,
             buildFs,
-            activeCanvas: Object.keys(project.canvases).sort()[0] ?? null,
+            activeCanvas: project.canvases.main ? "main" : Object.keys(project.canvases).sort()[0] ?? null,
             flowPath: [],
             view: "canvas",
             editorOpen: false,
@@ -270,8 +384,9 @@ export const useStore = create<State>()(
             statusNonce: Date.now(), status: `Открыт проект «${project.settings.name}»`,
           });
           loading = false;
-          flushHistory = null;
+          flushHistory?.();
           useStore.temporal.getState().clear();
+          resetNavigation();
           void runCheck();
         } catch (e) {
           loading = false;
@@ -280,15 +395,16 @@ export const useStore = create<State>()(
       },
 
       openInMemory(project) {
-        project = structuredClone(project);
+        project = prepareProject(structuredClone(project));
         migrateFolders(project);
         loading = true;
         endTreeDrag();
         set({
           project,
+          projectSession: get().projectSession + 1,
           fs: null,
           buildFs: null,
-          activeCanvas: Object.keys(project.canvases).sort()[0] ?? null,
+          activeCanvas: project.canvases.main ? "main" : Object.keys(project.canvases).sort()[0] ?? null,
           flowPath: [],
           view: "canvas",
           editorOpen: false,
@@ -302,8 +418,9 @@ export const useStore = create<State>()(
           statusNonce: Date.now(), status: "Проект в памяти — чтобы сохранять, откройте папку проекта",
         });
         loading = false;
-        flushHistory = null;
+        flushHistory?.();
         useStore.temporal.getState().clear();
+        resetNavigation();
         void runCheck();
       },
 
@@ -404,8 +521,8 @@ useStore.subscribe((s, prev) => {
   if (s.project === prev.project || !s.project) return;
   if (!loading && !s.dirty) useStore.setState({ dirty: true });
   // после отмены активный файл или вложенный слой может исчезнуть
-  if (s.activeCanvas && !s.project.canvases[s.activeCanvas]) {
-    useStore.setState({ activeCanvas: Object.keys(s.project.canvases).sort()[0] ?? null, flowPath: [], selection: [], selectedLink: null, selectedLinks: [], editorOpen: false });
+      if (s.activeCanvas && !s.project.canvases[s.activeCanvas]) {
+    useStore.setState({ activeCanvas: s.project.canvases.main ? "main" : Object.keys(s.project.canvases).sort()[0] ?? null, flowPath: [], selection: [], selectedLink: null, selectedLinks: [], editorOpen: false });
   } else if (s.activeCanvas && !canvasAtPath(s.project.canvases[s.activeCanvas], s.flowPath)) {
     useStore.setState({ flowPath: [], selection: [], selectedLink: null, selectedLinks: [], editorOpen: false });
   }

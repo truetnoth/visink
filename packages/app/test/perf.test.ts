@@ -2,7 +2,7 @@
 import { describe, expect, it } from "vitest";
 import { checkProject } from "@visink/checker";
 import type { Project } from "@visink/core";
-import { createCanvas, createCard, createProject } from "@visink/core";
+import { createCanvas, createCard, createProject, canvasLocations } from "@visink/core";
 import { mergeNodes } from "../src/canvasNodes";
 import type { Node } from "@xyflow/react";
 import { useStore } from "../src/store";
@@ -61,19 +61,20 @@ describe("производительность на 2000 карточек", () =
 
   it("правка одной карточки быстрее 50 мс, остальные карточки — те же объекты", () => {
     useStore.getState().openInMemory(bigProject());
-    useStore.getState().setActiveCanvas("big");
+    useStore.getState().setActiveCanvas("main", ["file_big"]);
     const before = useStore.getState().project!;
-    const beforeCards = before.canvases.big.cards;
+    const beforeCards = canvasLocations(before).find(({ canvas }) => canvas.id === "big")!.canvas.cards;
 
     const start = performance.now();
-    useStore.getState().editCanvas((c) => { c.cards[0].text = "Правка"; });
+    useStore.getState().editCanvas((c) => { const card = c.cards.find((item) => item.type === "line")!; card.text = "Правка"; });
     const elapsed = performance.now() - start;
     console.log(`editCanvas на ${N} карточек: ${elapsed.toFixed(2)} мс`);
 
     const after = useStore.getState().project!;
-    const afterCards = after.canvases.big.cards;
-    expect(afterCards[0].text).toBe("Правка");
-    for (let i = 1; i < beforeCards.length; i++) expect(afterCards[i]).toBe(beforeCards[i]);
+    const afterCards = canvasLocations(after).find(({ canvas }) => canvas.id === "big")!.canvas.cards;
+    expect(afterCards.find((card) => card.type === "line")!.text).toBe("Правка");
+    const changed = beforeCards.find((card) => card.type === "line")!;
+    for (let i = 0; i < beforeCards.length; i++) if (beforeCards[i] !== changed) expect(afterCards[i]).toBe(beforeCards[i]);
     expect(elapsed).toBeLessThan(50);
   }, 30000);
 

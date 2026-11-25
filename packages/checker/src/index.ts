@@ -1,9 +1,8 @@
 import { qualifiedName } from "@visink/core";
 import { Compiler, CompilerOptions, JsonFileHandler } from "inkjs/full";
-import type { Project } from "@visink/core";
-import { flowCards } from "@visink/core";
+import { canvasLocations, prepareProject, isBoundaryCard, type Project, type Card, type Canvas } from "@visink/core";
 import type { BuildResult, Diagnostic } from "@visink/compiler";
-import { buildProject, flattenCanvas, rootCard } from "@visink/compiler";
+import { buildProject, resolveTarget, runtimeCanvasId } from "@visink/compiler";
 
 export interface CheckResult {
   build: BuildResult;
@@ -53,47 +52,67 @@ export function compileInk(build: BuildResult): { diagnostics: Diagnostic[]; sto
   return { diagnostics, storyJson };
 }
 
-/** Достижимость карточек: от начала холста, точек входа и переходов с любых холстов. */
+/** Достижимость с учётом входов вложенностей и статических возвратов к их контейнерам. */
 export function findUnreachable(project: Project): Diagnostic[] {
+  project = prepareProject(structuredClone(project));
+  const locations = canvasLocations(project);
   const out: Diagnostic[] = [];
-  const reachedFromJumps = new Map<string, Set<string>>(); // canvas id → card ids или имена входов
-  for (const canvas of Object.values(project.canvases)) {
-    for (const { card } of flowCards(canvas)) {
-      if (card.type !== "jump" || !card.target) continue;
-      const [canvasId, sub] = card.target.split(".", 2);
-      if (!sub) continue;
-      if (!reachedFromJumps.has(canvasId)) reachedFromJumps.set(canvasId, new Set());
-      reachedFromJumps.get(canvasId)!.add(sub);
-    }
-  }
-  for (const [key, source] of Object.entries(project.canvases)) {
-    const canvas = flattenCanvas(source);
-    if (!canvas.cards.length) continue;
-    const extra = reachedFromJumps.get(canvas.id) ?? new Set();
-    const root = rootCard(canvas);
-    const seeds = [
-      ...(root ? [root.id] : []),
-      ...canvas.cards.filter((c) => c.entry || extra.has(c.id)).map((c) => c.id),
-    ];
-    if (!seeds.length) continue;
-    const next = new Map<string, string[]>();
-    for (const l of canvas.links) {
-      if (!next.has(l.from)) next.set(l.from, []);
-      next.get(l.from)!.push(l.to);
-    }
-    const seen = new Set<string>();
-    const stack = [...seeds];
-    while (stack.length) {
-      const id = stack.pop()!;
-      if (seen.has(id)) continue;
-      seen.add(id);
-      stack.push(...(next.get(id) ?? []));
+  const next = new Map<string, string[]>();
+  const seeds: string[] = [];
+  const node = (canvas: Canvas, card: Card) => `${canvas.id}.${card.id}`;
+  const link = (from: string, to?: string) => {
+    if (!to) return;
+    if (!next.has(from)) next.set(from, []);
+    next.get(from)!.push(to);
+  };
+  const resolve = (target: string): string | undefined => {
+    const path = resolveTarget(project, target);
+    if (!path) return undefined;
+    const [canvasId, sub] = path.split(".", 2);
+    const canvas = locations.find((x) => x.canvas.id === canvasId || runtimeCanvasId(project, x.canvas) === canvasId)?.canvas;
+    if (!canvas) return undefined;
+    if (!sub) return node(canvas, canvas.cards.find((c) => c.type === "entry")!);
+    const name = sub.startsWith("entry_") ? sub.slice(6) : sub;
+    const card = canvas.cards.find((c) => c.id === sub || c.entry === name);
+    return card ? node(canvas, card) : undefined;
+  };
+  for (const { canvas, parent } of locations) {
+    const entry = canvas.cards.find((c) => c.type === "entry");
+    if (entry) {
+      seeds.push(node(canvas, entry));
+      if (parent) seeds.push(node(parent.canvas, parent.card));
     }
     for (const card of canvas.cards) {
-      if (!seen.has(card.id)) {
-        out.push({ severity: "warning", code: "unreachable", canvas: key, card: card.id, message: "Недостижимая карточка: к ней нет пути от начала файла и точек входа" });
+      const from = node(canvas, card);
+      if (card.entry) seeds.push(from);
+      for (const l of canvas.links.filter((l) => l.from === card.id)) {
+        const target = canvas.cards.find((c) => c.id === l.to);
+        if (target) link(from, node(canvas, target));
+      }
+      if (card.type === "flow" && card.flow) {
+        const inner = card.flow.cards.find((c) => c.type === "entry");
+        if (inner) link(from, node(card.flow, inner));
+      } else if (card.type === "exit" && parent) {
+        for (const l of parent.canvas.links.filter((l) => l.from === parent.card.id)) {
+          const target = parent.canvas.cards.find((c) => c.id === l.to);
+          if (target) link(from, node(parent.canvas, target));
+        }
+      } else if (card.type === "jump" && card.target) {
+        link(from, resolve(card.target));
       }
     }
+  }
+  const seen = new Set<string>();
+  const stack = [...seeds];
+  while (stack.length) {
+    const id = stack.pop()!;
+    if (seen.has(id)) continue;
+    seen.add(id);
+    stack.push(...(next.get(id) ?? []));
+  }
+  for (const { canvas } of locations) for (const card of canvas.cards) {
+    if (isBoundaryCard(card) || seen.has(node(canvas, card))) continue;
+    out.push({ severity: "warning", code: "unreachable", canvas: canvas.id, card: card.id, message: "Недостижимая карточка: к ней нет пути от входов и переходов" });
   }
   return out;
 }
@@ -137,7 +156,7 @@ export function unknownIdentifiers(expr: string, project: Project, extra: string
       known.add(`${qualifiedName(project, l)}.${i}`);
     }
   }
-  const canvasIds = new Set(Object.values(project.canvases).map((c) => c.id));
+  const canvasIds = new Set(canvasLocations(project).flatMap(({ canvas }) => [canvas.id, ...(canvas.legacyId ? [canvas.legacyId] : [])]));
   const stripped = expr.replace(/"[^"]*"/g, " ");
   // временные переменные внутри функции: ~ temp x = …
   for (const m of stripped.matchAll(/\btemp\s+([A-Za-z_][\w]*)/g)) known.add(m[1]);

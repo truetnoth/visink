@@ -13,7 +13,7 @@ import { CreateMenu, type MenuItem } from '../canvas/menus';
 import { TYPE_ICON, TYPE_LABEL } from '../canvas/constants';
 import { COLORS } from './fields';
 
-const icons = { root: Folder, folder: Folder, scope: Variable, entity: Users, file: FileText, card: MessageSquare, note: StickyNote, group: Layers, var: Variable, list: List, func: Braces };
+const icons = { root: Folder, folder: Folder, scope: Variable, entity: Users, file: FileText, card: MessageSquare, group: Layers, var: Variable, list: List, func: Braces };
 type Events = {
   activate: (node: TreeNode, event: React.MouseEvent | React.KeyboardEvent) => void;
   context: (node: TreeNode, x: number, y: number) => void;
@@ -22,12 +22,12 @@ type Events = {
   drop: (node: TreeNode, event: React.DragEvent) => void;
 };
 const Branch = memo(function Branch({ node, expanded, selected, dropTarget, toggle, events }: { node: TreeNode; expanded: Set<string>; selected: Set<string>; dropTarget: string; toggle: (id: string) => void; events: Events }) {
-  const open = expanded.has(node.id), Icon = node.id === "globals" ? Folder : icons[node.kind];
+  const open = expanded.has(node.id), Icon = node.id === "globals" ? Folder : node.kind === 'card' && node.cardType === 'condition' ? TYPE_ICON.condition : node.kind === 'card' && node.nested ? Folder : icons[node.kind];
   return <li className="tree-branch" onDragOver={(e) => events.over(node, e)} onDrop={(e) => events.drop(node, e)}>
     <div className={`tree-row ${selected.has(node.id) ? 'on' : ''} ${dropTarget === node.id ? 'tree-drop-target' : ''}`} data-tree-id={node.id} role="button" tabIndex={0} title={node.title} aria-current={selected.has(node.id) ? 'true' : undefined}
       draggable={!!treeItem(node)} onDragStart={(e) => events.drag(node, e)} onDragEnd={endTreeDrag} onDragOver={(e) => events.over(node, e)} onDrop={(e) => events.drop(node, e)}
       onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); events.context(node, e.clientX, e.clientY); }}
-      onClick={(e) => events.activate(node, e)} onDoubleClick={() => { if (node.kind === 'file') useStore.getState().openEditor(); }}
+      onClick={(e) => events.activate(node, e)} onDoubleClick={() => { if (node.kind === 'file' || node.kind === 'root' && node.root) useStore.getState().openEditor(); }}
       onKeyDown={(e) => {
         if (e.target !== e.currentTarget) return;
         if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); events.activate(node, e); }
@@ -55,14 +55,17 @@ export function ProjectTree() {
   const [prompt, setPrompt] = useState<{ title: string; value: string; apply: (name: string) => void } | null>(null);
   const [promptError, setPromptError] = useState('');
   const ref = useRef<HTMLDivElement>(null);
-  let base = view === 'logic' ? owner ? `scope:${owner}` : 'globals' : view === 'characters' && entity ? `entity:${entity}` : active ? `file:${active}` : '';
+  let base = view === 'logic' ? owner ? `scope:${owner}` : 'globals' : view === 'characters' && entity ? `entity:${entity}` : active ? active === 'main' ? 'files' : `file:${active}` : '';
   if (inspect) base = inspect.owner ? project.entities.some((e) => e.id === inspect.owner) ? `entity:${inspect.owner}` : `scope:${inspect.owner}` : 'globals';
   else if (view === 'canvas' && active) {
-    if (selection.length === 1) base = index.nodes.has(cardTreeId(active, selection[0])) ? cardTreeId(active, selection[0]) : `note:${active}:${selection[0]}`;
-    else if (path.length) base = cardTreeId(active, path[path.length - 1]);
+    if (selection.length === 1) {
+      const cardId = cardTreeId(active, selection[0], path);
+      base = index.nodes.has(cardId) ? cardId : path.length ? cardTreeId(active, path[path.length - 1], path.slice(0, -1)) : active === 'main' ? 'files' : `file:${active}`;
+    }
+    else if (path.length) base = cardTreeId(active, path[path.length - 1], path.slice(0, -1));
   }
   useEffect(() => { setPicked([]); }, [base, selection]);
-  const selected = useMemo(() => new Set(picked.length ? picked : view === 'canvas' && active && selection.length > 1 ? selection.map((id) => cardTreeId(active, id)) : [base]), [picked, base, view, active, selection]);
+  const selected = useMemo(() => new Set(picked.length ? picked : view === 'canvas' && active && selection.length > 1 ? selection.map((id) => cardTreeId(active, id, path)) : [base]), [picked, base, view, active, selection]);
   const focusNonce = useStore((s) => s.focus?.nonce ?? 0);
   const revealKey = `${focusNonce}|${base}|${[...selected].join(',')}`;
   const lastReveal = useRef('');
@@ -78,17 +81,16 @@ export function ProjectTree() {
   const toggle = useCallback((id: string) => setExpanded((old) => { const next = new Set(old); if (next.has(id)) next.delete(id); else next.add(id); return next; }), []);
   const open = (node: TreeNode) => {
     const st = useStore.getState();
+    if (node.kind === 'root' && node.root) { st.setActiveCanvas(node.root, node.path); return; }
     if (node.kind === 'root' || node.kind === 'folder') { toggle(node.id); setPicked([node.id]); return; }
     if (node.kind === 'scope') { st.selectLogicScope(node.owner ?? null); return; }
     if (node.kind === 'entity') { st.selectEntity(node.owner!); return; }
     if (node.kind === 'var' || node.kind === 'list' || node.kind === 'func') { st.inspectVariable(node.kind, node.name!, node.owner); return; }
     if (!node.root) return;
-    st.setActiveCanvas(node.root, node.path);
-    if (node.kind === 'file') return;
-    if (node.kind === 'group') { st.setSelection(node.members ?? []); return; }
-    st.setSelection([node.card!]);
-    useStore.setState({ focus: { canvas: node.root, card: node.card!, nonce: Date.now() } });
-    if (node.kind === 'note') st.openEditor();
+    if (node.kind === 'file') { st.setActiveCanvas(node.root, node.path); return; }
+    const canvas = canvasAtPath(st.project!.canvases[node.root], node.path);
+    if (node.kind === 'group') { st.setActiveCanvas(node.root, node.path); st.setSelection(node.members ?? []); return; }
+    st.focusCard(canvas?.id ?? node.root, node.card!);
   };
   const dragCache = useRef<{ project: Project; items: TreeItem[]; results: Map<string, string> } | null>(null);
   const canDrop = (node: TreeNode, items: TreeItem[]) => {
@@ -156,7 +158,7 @@ export function ProjectTree() {
 
     }
     if (place?.section === 'files') items.push({ label: 'Создать файл', icon: FileText, run: () => ask('Название файла', 'Новый файл', (name) => {
-      let id = ''; editAtomic((p) => { id = addCanvas(p, name); p.canvases[id].folderId = place.folderId; }); useStore.getState().setActiveCanvas(id);
+      let id = ''; editAtomic((p) => { id = addCanvas(p, name); const card = p.canvases.main.cards.find((c) => c.id === id); if (card?.flow) { card.folderId = place.folderId; card.flow.folderId = place.folderId; } }); useStore.getState().setActiveCanvas('main', [id]);
     }) });
     if (place?.section === 'entities') items.push({ label: 'Создать сущность', icon: Users, run: () => ask('Название сущности', 'Новая сущность', (name) => {
       let id = ''; editAtomic((p) => {
@@ -178,7 +180,7 @@ export function ProjectTree() {
         }); useStore.getState().inspectVariable('var', name, variableOwner);
       }) });
     }
-    const canvasDest = n.kind === 'file' ? { root: n.root!, path: [] } : n.root && n.kind !== 'folder' ? { root: n.root, path: n.kind === 'card' && n.nested ? [...(n.path ?? []), n.card!] : n.path ?? [] } : null;
+    const canvasDest = n.kind === 'file' || n.kind === 'root' && n.root ? { root: n.root!, path: [] } : n.root && n.kind !== 'folder' ? { root: n.root, path: n.kind === 'card' && n.nested ? [...(n.path ?? []), n.card!] : n.path ?? [] } : null;
     if (canvasDest) {
       for (const type of ['line', 'hub', 'condition', 'jump', 'flow', 'ink'] as CardType[]) items.push({ label: `Создать: ${TYPE_LABEL[type]}`, icon: TYPE_ICON[type], run: () => {
         let id = ''; editAtomic((p) => {
@@ -192,7 +194,7 @@ export function ProjectTree() {
         useStore.getState().setActiveCanvas(canvasDest.root, canvasDest.path); useStore.getState().setSelection([id]);
       } });
     }
-    if (n.kind !== 'root' && !(n.kind === 'scope' && !n.owner)) items.push({ label: 'Удалить', icon: Trash2, run: () => {
+    if (n.kind !== 'root' && !(n.kind === 'scope' && !n.owner) && !(n.kind === 'file' && n.root === 'main')) items.push({ label: 'Удалить', icon: Trash2, run: () => {
       editAtomic((p) => {
         if (n.kind === 'folder') deleteFolder(p, n.folderId!);
         else if (n.kind === 'file') delete p.canvases[n.root!];
@@ -206,7 +208,6 @@ export function ProjectTree() {
           const canvas = canvasAtPath(p.canvases[n.root!], n.path ?? []);
           if (!canvas) return;
           if (n.kind === 'card') deleteCards(canvas, [n.card!]);
-          else if (n.kind === 'note') canvas.notes = canvas.notes.filter((note) => note.id !== n.card);
           else if (n.kind === 'group') canvas.groups = canvas.groups.filter((_, index) => index !== n.group);
         }
       });
@@ -220,7 +221,7 @@ export function ProjectTree() {
         const collection = kind === 'var' ? p.variables.vars : kind === 'list' ? p.variables.lists : p.variables.functions;
         if (!collection.some((item) => item.name === name && item.owner === owner)) useStore.setState({ inspect: null });
       }
-      if (n.kind === 'card' || n.kind === 'note' || n.kind === 'group') st.setSelection([]);
+      if (n.kind === 'card' || n.kind === 'group') st.setSelection([]);
     } });
     return items;
   };

@@ -24,18 +24,19 @@ describe("пространства имен", () => {
     const p = fixture();
     p.variables.functions.push({ name: "test", params: [], body: '~ return ent_player.met' });
     const inner = p.canvases.scene.cards[0].flow!;
-    inner.cards[0].action = 'ent_player.met = "ent_player.met"';
+    const card = inner.cards.find((c) => c.id === "inner")!;
+    card.action = 'ent_player.met = "ent_player.met"';
     renameNamespace(p, "ent_player", "hero");
-    expect(inner.cards[0].condition).toBe("hero.met");
-    expect(inner.cards[0].speaker).toBe("ent_player");
-    expect(inner.cards[0].action).toBe('hero.met = "ent_player.met"');
-    expect(inner.links[0].action).toBe("hero.met = false");
+    expect(card.condition).toBe("hero.met");
+    expect(card.speaker).toBe("ent_player");
+    expect(card.action).toBe('hero.met = "ent_player.met"');
+    expect(inner.links.find((link) => link.from === "inner")?.action).toBe("hero.met = false");
     expect(p.variables.functions[0].body).toBe("~ return hero.met");
     expect(compileLogic(p, "hero.met")).toBe("hero__met");
     expect(unknownIdentifiers("hero.met", p)).toEqual([]);
     expect(candidates(p).some((s) => s.insert === "hero.met")).toBe(true);
     renameVariable(p, "met", "first_met", "ent_player");
-    expect(inner.cards[0].condition).toBe("hero.first_met");
+    expect(card.condition).toBe("hero.first_met");
   });
   it("собирает независимые одинаковые имена и перемещает глобальную переменную в набор", () => {
     const p = fixture(); const id = addVariableSet(p); renameNamespace(p, id, "quest");
@@ -78,7 +79,7 @@ describe("пространства имен", () => {
   });
   it("показывает понятные названия переходов и условий", () => {
     const p = fixture(); const c = p.canvases.scene;
-    const hub = c.cards[0].flow!.cards[1]; hub.text = "Встреча"; hub.entry = "meeting";
+    const hub = c.cards[0].flow!.cards.find((card) => card.id === "next")!; hub.text = "Встреча"; hub.entry = "meeting";
     c.cards.push(createCard("jump", "jump", { target: "scene.next" }), createCard("check", "condition", { condition: "ent_player.met", text: "Старое название" }));
     const label = () => indexHierarchy(projectHierarchy(p)).nodes.get("card:scene:jump")!.title;
     expect(label()).toBe("Переход → Хаб: Встреча");
@@ -99,16 +100,16 @@ describe("пространства имен", () => {
     c.cards[0].note = "Комментарий";
     c.notes.push({ id: "n1", text: "Заметка", x: 0, y: 0 }); c.groups.push({ title: "Группа", cards: ["inner", "next"] });
     const { nodes, parents } = indexHierarchy(projectHierarchy(p));
-    expect(nodes.has("card:scene:inner")).toBe(true);
-    expect(nodes.has("card:scene:inner:in")).toBe(false);
+    expect(nodes.has("card:scene:outer:inner")).toBe(true);
+    expect(nodes.has("card:scene:outer:inner:in")).toBe(false);
     expect(nodes.has("card:scene:outer:inside")).toBe(false);
-    expect(nodes.get("card:scene:inner")?.children).toEqual([]);
+    expect(nodes.get("card:scene:outer:inner")?.children).toEqual([]);
     expect(nodes.has("link:scene:inner>next>")).toBe(false);
-    expect(nodes.get("card:scene:outer")?.children.map((n) => n.kind)).toEqual(["card", "card", "note", "group"]);
-    expect(nodes.has("note:scene:n1")).toBe(true);
+    expect(nodes.get("card:scene:outer")?.children.map((n) => n.kind)).toEqual(["card", "card", "group"]);
+    expect(nodes.has("note:scene:outer:n1")).toBe(false);
     expect(nodes.has("logic:var:ent_player:met")).toBe(false);
     expect(nodes.get("entity:ent_player")?.children).toEqual([]);
-    expect(parents.get("card:scene:inner")).toBe("card:scene:outer");
+    expect(parents.get("card:scene:outer:inner")).toBe("card:scene:outer");
     expect([...nodes.values()].some((n) => n.kind === "group")).toBe(true);
   });
 });

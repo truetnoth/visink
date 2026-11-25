@@ -3,8 +3,10 @@
 exports[`сборка демо-проекта > стабильный вывод > advisor.ink 1`] = `
 "// Сгенерировано Visink — не править вручную, правки пропадут при следующей сборке.
 === advisor ===
--> a1
+-> __entry
 = entry_office
+-> a1
+= __entry
 -> a1
 = a1
 НАУЧРУК: Ну что, был у декана? \\# не тег \\{не условие\\} \\[не выбор\\] /\\/ не комментарий \\-> не переход # id: advisor.a1 # speaker: ent_advisor
@@ -14,6 +16,7 @@ exports[`сборка демо-проекта > стабильный вывод 
 * {logic >= 3} [Спросить про письмо.] -> a4
 + [Уйти.] -> a5
 * -> a12
+* -> DONE
 = a3
 ИГРОК: Что в архиве? # id: advisor.a3 # speaker: ent_player
 -> a6
@@ -45,6 +48,9 @@ exports[`сборка демо-проекта > стабильный вывод 
 -> a11
 = a11
 -> END
+-> __exit
+= __exit
+-> main.__visink_continue_file_advisor
 = a12
 -> a8
 "
@@ -53,8 +59,10 @@ exports[`сборка демо-проекта > стабильный вывод 
 exports[`сборка демо-проекта > стабильный вывод > dean.ink 1`] = `
 "// Сгенерировано Visink — не править вручную, правки пропадут при следующей сборке.
 === dean ===
--> c1
+-> __entry
 = entry_first_meeting
+-> c1
+= __entry
 -> c1
 = c1
 ДЕКАН: Садитесь. # id: dean.c1 # speaker: ent_dean
@@ -64,6 +72,7 @@ exports[`сборка демо-проекта > стабильный вывод 
 * [«Почти готова».] -> c3
 * {not thesis_changed} [«Я сменил тему».] -> c4
 * [Промолчать.] -> c5
+* -> DONE
 = c3
 ИГРОК: Почти готова. # id: dean.c3 # speaker: ent_player
 -> c6
@@ -81,7 +90,9 @@ exports[`сборка демо-проекта > стабильный вывод 
 -> c7
 = c7
 ДЕКАН: Молчание — тоже ответ. # id: dean.c7 # speaker: ent_dean # dir: откидывается в кресле
--> DONE
+-> __exit
+= __exit
+-> main.__visink_continue_file_dean
 "
 `;
 
@@ -100,7 +111,23 @@ INCLUDE globals.ink
 INCLUDE advisor.ink
 INCLUDE dean.ink
 
+-> main
+=== main ===
+-> __entry
+= __entry
+-> __main_start
+= __main_start
 -> dean.entry_first_meeting
+= __exit
+-> DONE
+= file_advisor
+-> advisor
+= file_dean
+-> dean
+= __visink_continue_file_dean
+-> DONE
+= __visink_continue_file_advisor
+-> DONE
 "
 `;
 
@@ -128,6 +155,12 @@ exports[`сборка демо-проекта > стабильный вывод 
       "file": "dean.ink",
       "id": "dean",
       "title": "Декан"
+    },
+    {
+      "entries": [],
+      "file": "main.ink",
+      "id": "main",
+      "title": "Тёмная академия — демо"
     }
   ],
   "characters": [

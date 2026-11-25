@@ -5,7 +5,9 @@ export type CardType =
   | "hub" // стежок без текста, цикл расспросов
   | "condition" // да / нет
   | "jump" // переход на другой холст
-  | "flow" // именованная вложенность с автоматическими входом и выходами
+  | "flow" // именованная вложенность: карточка, папка в дереве и отдельный knot Ink
+  | "entry" // единственный явный вход холста
+  | "exit" // единственный выход; у вложенности продолжает карточку-владельца
   | "ink"; // чистый ink
 
 export type Repeat = "once" | "sticky" | "fallback";
@@ -28,10 +30,16 @@ export interface Card {
   repeat?: Repeat;
   tags?: Record<string, string>;
   status?: TextStatus;
+  /** пользовательский цвет подходящих типов карточек */
+  color?: string;
   note?: string;
+  /** сохраняемое описание карточки-вложенности */
+  description?: string;
+  /** организационная папка для карточки-вложенности верхнего уровня */
+  folderId?: string;
   /** jump: "canvas", "canvas.entry_name" или "canvas.cardId" */
   target?: string;
-  /** организационный внутренний поток; компилируется в тот же файл, что и карточка */
+  /** содержимое карточки-контейнера; экспортируется как отдельный knot Ink */
   flow?: Canvas;
 }
 
@@ -45,6 +53,8 @@ export interface Link {
   kind: LinkKind;
   /** condition-карточка: какой выход — "yes" | "no" */
   port?: "yes" | "no";
+  /** одноразовая миграция: прежний прямой старт не превращается в меню выбора */
+  direct?: boolean;
   /** ink-выражение: по стрелке можно пройти, только если оно истинно */
   condition?: string;
   /** ink-логика при переходе по стрелке, строки `~ ...` */
@@ -62,6 +72,7 @@ export interface Point {
 export interface Note {
   id: string;
   text: string;
+  color?: string;
   x: number;
   y: number;
   w?: number;
@@ -84,7 +95,9 @@ export interface Canvas {
   /** папка в списке файлов; на сборку не влияет */
   group?: string;
   folderId?: string;
-  /** id карточки, с которой начинается файл (узел ink) */
+  /** прежний корневой адрес для тегов строк и совместимых stitch/entry */
+  legacyId?: string;
+  /** @deprecated источник для миграции; начало задаёт связь из карточки «Вход» */
   start?: string;
   owner?: string;
   entries: Entry[];

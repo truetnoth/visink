@@ -1,5 +1,6 @@
 import type { Canvas, Project } from "@visink/core";
 import { namespaceError, namespaceName, qualifiedName } from "@visink/core";
+import { mapStoryText } from "@visink/compiler";
 import { mentions, replaceIdent } from "./ops";
 
 /** Только поля с Ink-логикой, включая все вложенные потоки. */
@@ -9,6 +10,10 @@ function mapExpressions(project: Project, transform: (text: string, owner?: stri
     for (const c of canvas.cards) {
       if (c.condition) c.condition = transform(c.condition);
       if (c.action) c.action = transform(c.action);
+      if (c.type === "line") {
+        if (c.text) c.text = mapStoryText(project, c.text, transform);
+        if (c.menuText) c.menuText = mapStoryText(project, c.menuText, transform);
+      }
       if (c.type === "ink" && c.text) c.text = transform(c.text);
       if (c.flow) visit(c.flow);
     }

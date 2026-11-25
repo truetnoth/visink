@@ -45,14 +45,15 @@ export function useTableColumns(scope: "entity" | "global") {
   const drag = useRef<{ index: number; x: number; widths: number[] } | null>(null);
   useEffect(() => { try { localStorage.setItem(KEY + scope, JSON.stringify(widths)); } catch { /* Local preference only. */ } }, [scope, widths]);
   const resize = (index: number, width: number) => setWidths((old) => resizeColumns(old, index, width));
+  const availableWidth = () => container.current?.querySelector("table")?.clientWidth ?? 0;
   const handle = (index: number, label: string) => <span className="column-resizer" role="separator" tabIndex={0} aria-orientation="vertical" aria-label={`Ширина: ${label}`} aria-valuemin={Math.round(MINIMUM[index] * 100)} aria-valuemax={Math.round(MAXIMUM[index] * 100)} aria-valuenow={Math.round(widths[index] * 100)}
     onPointerDown={(e) => { e.preventDefault(); e.stopPropagation(); e.currentTarget.setPointerCapture(e.pointerId); drag.current = { index, x: e.clientX, widths: [...widths] }; }}
-    onPointerMove={(e) => { const d = drag.current; const available = container.current?.clientWidth ?? 0; if (d?.index === index && available > 0) setWidths(resizeColumns(d.widths, index, d.widths[index] + (e.clientX - d.x) / available)); }}
+    onPointerMove={(e) => { const d = drag.current; const available = availableWidth(); if (d?.index === index && available > 0) setWidths(resizeColumns(d.widths, index, d.widths[index] + (e.clientX - d.x) / available)); }}
     onPointerUp={(e) => { drag.current = null; if (e.currentTarget.hasPointerCapture(e.pointerId)) e.currentTarget.releasePointerCapture(e.pointerId); }}
     onPointerCancel={() => { drag.current = null; }} onLostPointerCapture={() => { drag.current = null; }}
     onDoubleClick={() => resize(index, INITIAL_COLUMNS[index])}
     onKeyDown={(e) => {
-      const available = container.current?.clientWidth ?? 0;
+      const available = availableWidth();
       if ((e.key === "ArrowLeft" || e.key === "ArrowRight") && available > 0) { e.preventDefault(); resize(index, widths[index] + (e.key === "ArrowLeft" ? -10 : 10) / available); }
       if (e.key === "Home") { e.preventDefault(); resize(index, INITIAL_COLUMNS[index]); }
     }} />;

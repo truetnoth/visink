@@ -1,6 +1,6 @@
-import { canvasAtPath, flowCards, guessStart, syncEntries, type Project, type Canvas, type Card, type FolderSection } from '@visink/core';
+import { canvasAtPath, flowCards, syncEntries, isBoundaryCard, type Project, type Canvas, type Card, type FolderSection } from '@visink/core';
 import { moveVariable, moveFunction } from './namespaceOps';
-import { replaceIdent } from './ops';
+import { replaceIdent, deleteCards } from './ops';
 
 export type TreeItem =
   | { kind: 'folder'; id: string }
@@ -31,9 +31,31 @@ function deleteOwnedMembers(p: Project, owners: Set<string>) {
   p.variables.functions = p.variables.functions.filter((v) => !v.owner || !owners.has(v.owner));
 }
 
+export function deleteEntities(p: Project, ids: Iterable<string>) {
+  const removed = new Set([...ids].filter((id) => p.entities.some((entity) => entity.id === id)));
+  if (!removed.size) return;
+  const members = [...p.variables.vars, ...p.variables.lists, ...p.variables.functions].some((item) => item.owner && removed.has(item.owner));
+  if (members) throw new Error('У сущности есть собственные переменные, LIST или функции. Сначала удалите их, чтобы не оставить битые ссылки');
+  const narrator = p.entities.find((entity) => entity.id === 'ent_narrator' && !entity.isPlayer && !removed.has(entity.id));
+  const visit = (canvas: Canvas) => {
+    if (canvas.owner && removed.has(canvas.owner)) {
+      if (narrator) canvas.owner = narrator.id;
+      else delete canvas.owner;
+    }
+    for (const card of canvas.cards) {
+      if (card.speaker && removed.has(card.speaker)) {
+        if (narrator) card.speaker = narrator.id;
+        else delete card.speaker;
+      }
+      if (card.flow) visit(card.flow);
+    }
+  };
+  Object.values(p.canvases).forEach(visit);
+  p.entities = p.entities.filter((entity) => !removed.has(entity.id));
+}
+
 export function deleteEntity(p: Project, id: string) {
-  p.entities = p.entities.filter((entity) => entity.id !== id);
-  deleteOwnedMembers(p, new Set([id]));
+  deleteEntities(p, [id]);
 }
 
 export function deleteVariableSet(p: Project, id: string) {
@@ -52,9 +74,12 @@ export function deleteFolder(p: Project, id: string) {
     folders.filter((f) => f.parent === parent).forEach((f) => collect(f.id));
   };
   collect(id);
-  if (folder.section === 'files') for (const [key, canvas] of Object.entries(p.canvases)) if (canvas.folderId && removed.has(canvas.folderId)) delete p.canvases[key];
+  if (folder.section === 'files') {
+    const main = p.canvases.main;
+    if (main) deleteCards(main, main.cards.filter((card) => card.flow?.folderId && removed.has(card.flow.folderId)).map((card) => card.id));
+  }
   const entities = new Set(p.entities.filter((entity) => entity.folderId && removed.has(entity.folderId)).map((entity) => entity.id));
-  if (folder.section === 'entities') p.entities = p.entities.filter((entity) => !entities.has(entity.id));
+  if (folder.section === 'entities') deleteEntities(p, entities);
   deleteOwnedMembers(p, entities);
   p.variables.vars = p.variables.vars.filter((v) => !v.folderId || !removed.has(v.folderId));
   p.variables.lists = p.variables.lists.filter((v) => !v.folderId || !removed.has(v.folderId));
@@ -115,13 +140,17 @@ export function moveCards(p: Project, sourceKey: string, sourcePath: string[], i
   if (!source || !target) throw new Error('Холст не найден');
   if (source === target) throw new Error('Карточки уже находятся на этом холсте');
   const selected = new Set(ids);
+  if (source.cards.some((card) => selected.has(card.id) && isBoundaryCard(card))) throw new Error('Технические входы и выходы нельзя переносить');
   const moving = source.cards.filter((c) => selected.has(c.id));
   if (moving.length !== selected.size || !moving.length) throw new Error('Карточки не найдены');
   const all: Card[] = moving.flatMap((c) => [c, ...(c.flow ? flowCards(c.flow).map((x) => x.card) : [])]);
   const movedIds = new Set(all.map((c) => c.id));
   if (sourceRoot === targetRoot && targetPath.some((id) => movedIds.has(id))) throw new Error('Нельзя переместить карточку внутрь себя');
-  if (!sourcePath.length && selected.has(source.start ?? guessStart(source)?.id ?? '')) throw new Error('Сначала назначьте другое начало исходного файла');
-  if (source.links.some((l) => selected.has(l.from) !== selected.has(l.to))) throw new Error('Есть связи с оставшимися карточками. Перенесите связанные карточки вместе или удалите внешние связи');
+  if (source.links.some((l) => {
+    if (selected.has(l.from) === selected.has(l.to)) return false;
+    const other = source.cards.find((c) => c.id === (selected.has(l.from) ? l.to : l.from));
+    return !!other && !isBoundaryCard(other);
+  })) throw new Error('Есть связи с оставшимися карточками. Перенесите связанные карточки вместе или удалите внешние связи');
   const sameRoot = sourceRoot === targetRoot;
   const taken = new Set<string>();
   const collectIds = (c: Canvas) => { c.graveyard.forEach((id) => taken.add(id)); c.notes.forEach((n) => taken.add(n.id)); for (const card of c.cards) { if (!sameRoot || !movedIds.has(card.id)) taken.add(card.id); if (card.flow) collectIds(card.flow); } };
@@ -134,13 +163,22 @@ export function moveCards(p: Project, sourceKey: string, sourcePath: string[], i
   for (const c of all) if (!mapping.has(c.id)) mapping.set(c.id, allocate(c.id));
   const entries = new Set(flowCards(targetRoot).filter(({ card }) => !sameRoot || !movedIds.has(card.id)).map(({ card }) => card.entry).filter(Boolean));
   const addresses = new Map<string, string>();
-  for (const c of all) addresses.set(`${sourceRoot.id}.${c.id}`, `${targetRoot.id}.${mapping.get(c.id)!}`);
+  for (const c of all) {
+    for (const from of [source.id, ...(source.legacyId ? [source.legacyId] : [])]) {
+      for (const to of [target.id, ...(target.legacyId ? [target.legacyId] : [])]) addresses.set(`${from}.${c.id}`, `${to}.${mapping.get(c.id)!}`);
+    }
+  }
   for (const c of all) {
     if (c.entry) {
-      let entry = c.entry; for (let n = 2; entries.has(entry) || taken.has(`entry_${entry}`); n++) entry = `${c.entry}_${n}`;
+      const oldEntry = c.entry;
+      let entry = oldEntry; for (let n = 2; entries.has(entry) || taken.has(`entry_${entry}`); n++) entry = `${oldEntry}_${n}`;
       entries.add(entry);
-      addresses.set(`${sourceRoot.id}.${c.entry}`, `${targetRoot.id}.entry_${entry}`);
-      addresses.set(`${sourceRoot.id}.entry_${c.entry}`, `${targetRoot.id}.entry_${entry}`);
+      for (const from of [source.id, ...(source.legacyId ? [source.legacyId] : [])]) {
+        for (const to of [target.id, ...(target.legacyId ? [target.legacyId] : [])]) {
+          addresses.set(`${from}.${oldEntry}`, `${to}.entry_${entry}`);
+          addresses.set(`${from}.entry_${oldEntry}`, `${to}.entry_${entry}`);
+        }
+      }
       c.entry = entry;
     }
   }
@@ -155,6 +193,9 @@ export function moveCards(p: Project, sourceKey: string, sourcePath: string[], i
     c.entries = syncEntries(c).entries;
   };
   const links = source.links.filter((l) => selected.has(l.from) && selected.has(l.to));
+  const sourceExit = source.cards.find((c) => c.type === "exit");
+  const terminalLinks = sourceExit ? source.links.filter((l) => l.to === sourceExit.id && selected.has(l.from)) : [];
+  const sourceEntry = source.cards.find((c) => c.type === "entry");
   source.links = source.links.filter((l) => !selected.has(l.from) && !selected.has(l.to));
   const maxX = Math.max(-360, ...Object.values(target.layout).map((at) => at.x));
   const minX = Math.min(...moving.map((c) => source.layout[c.id]?.x ?? 0));
@@ -170,10 +211,16 @@ export function moveCards(p: Project, sourceKey: string, sourcePath: string[], i
     delete source.layout[oldId];
   }
   target.links.push(...links.map((l) => ({ ...l, from: mapId(l.from), to: mapId(l.to) })));
+  const targetExit = target.cards.find((c) => c.type === "exit");
+  if (targetExit) for (const link of terminalLinks) target.links.push({ ...link, from: mapId(link.from), to: targetExit.id });
+  if (sourceEntry && !source.links.some((l) => l.from === sourceEntry.id) && sourceExit) source.links.push({ from: sourceEntry.id, to: sourceExit.id, order: 0, kind: "divert" });
+  const targetEntry = target.cards.find((c) => c.type === "entry");
+  if (targetEntry && targetExit && target.links.some((l) => l.from === targetEntry.id && l.to === targetExit.id)) {
+    target.links = target.links.filter((l) => l.from !== targetEntry.id || l.to !== targetExit.id);
+    if (!target.links.some((l) => l.from === targetEntry.id)) target.links.push({ from: targetEntry.id, to: mapId(moving[0].id), order: 0, kind: "divert" });
+  }
   target.groups.push(...groups);
   if (!sameRoot) source.graveyard.push(...[...movedIds].filter((id) => !source.graveyard.includes(id)));
-  if (source.start && selected.has(source.start)) source.start = guessStart(source)?.id;
-  target.start ??= guessStart(target)?.id;
   source.entries = syncEntries(source).entries; target.entries = syncEntries(target).entries;
   // One-pass token replacement avoids chained replacements when IDs collide.
   const rewrite = (text: string) => {

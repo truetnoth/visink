@@ -1,4 +1,4 @@
-import { qualifiedName } from "@visink/core";
+import { canvasLocations, qualifiedName } from "@visink/core";
 // Подсказки при вводе ink-выражений: переменные, списки и их элементы, функции, файлы, встроенные функции ink.
 import type { Project } from "@visink/core";
 import { INK_BUILTINS } from "@visink/checker";
@@ -48,7 +48,9 @@ export function candidates(project: Project, extra: string[] = [], owner?: strin
     out.push(call(name(f), f.params, "func", f.description || (f.external ? "реализует игра" : entityName(f.owner) ?? "функция")));
     if (owner && f.owner === owner) out.push(call(f.name, f.params, "func", "функция персонажа"));
   }
-  for (const c of Object.values(project.canvases)) out.push({ kind: "file", insert: c.id, label: c.id, hint: `файл · ${c.title}` });
+  for (const { canvas: c } of canvasLocations(project)) {
+    for (const id of [c.id, ...(c.legacyId ? [c.legacyId] : [])]) out.push({ kind: "file", insert: id, label: id, hint: `файл · ${c.title}` });
+  }
   for (const b of INK_BUILTINS) out.push(call(b, null, "builtin", "ink"));
   return out;
 }

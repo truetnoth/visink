@@ -1,19 +1,20 @@
 import { namespaceName, qualifiedName } from "@visink/core";
 import { NamespaceField } from "./NamespaceField";
-import { addVariableSet, moveVariable, moveFunction } from "./namespaceOps";
+import { addVariableSet, moveVariable } from "./namespaceOps";
 import { deleteVariableSet } from "./organization";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Play, Plus, RotateCcw, StepForward, Trash2 } from "lucide-react";
 import { Story } from "inkjs";
 import type { Entity, InkFunction, InkListDef, Project, Variable, VarType } from "@visink/core";
-import { flowCards, isValidInkName } from "@visink/core";
-import { scopedInkName } from "@visink/compiler";
+import { flowCards, isValidInkName, canvasLocations } from "@visink/core";
+import { resolveTarget, scopedInkName } from "@visink/compiler";
 import { unknownIdentifiers } from "@visink/checker";
 import { EntityProps } from "./Panels";
 import { logicalName, renameVariable } from "./ops";
 import { editAtomic, useStore } from "./store";
 import { useTableColumns } from "./tableColumns";
 import { CodeInput, Combobox, Select } from "./ui";
+import { projectStats } from "./stats";
 
 const VAR_TYPES: [VarType, string][] = [["bool", "bool"], ["int", "int"], ["float", "float"], ["string", "string"]];
 const defaultFor = (type: VarType) => type === "bool" ? false : type === "string" ? "" : 0;
@@ -146,7 +147,6 @@ function ListsEditor({ project, owner }: { project: Project; owner?: string }) {
 
 function FunctionsEditor({ project, owner }: { project: Project; owner?: string }) {
   const edit = useStore.getState().edit;
-  const [error, setError] = useState("");
   const [checked, setChecked] = useState<Set<string>>(new Set());
   const functions = project.variables.functions.filter((f) => f.owner === owner);
   const update = (source: InkFunction, fn: (f: InkFunction) => void) => edit((p) => {
@@ -162,16 +162,11 @@ function FunctionsEditor({ project, owner }: { project: Project; owner?: string 
   return (
     <section className="logic-section">
       <div className="screen-section-head"><h3>Функции <span className="muted">{functions.length}</span></h3><button onClick={add}><Plus size={14} /> Функция</button>{checked.size > 0 && <button className="danger" onClick={() => remove(functions.filter((f) => checked.has(logicalName(f))))}><Trash2 size={14} /> Удалить выбранные ({checked.size})</button>}</div>
-      {error && <div className="bad" role="alert">{error}</div>}
       {functions.length > 0 && <div className="logic-cards functions-grid">
         {functions.map((f) => {
           const unknown = unknownIdentifiers(f.body, project, f.params, f.owner);
           return <div className="logic-card" data-logic-kind="func" data-logic-name={f.name} key={logicalName(f)}>
             <div className="logic-card-head"><input type="checkbox" aria-label={`Выбрать ${logicalName(f)}`} checked={checked.has(logicalName(f))} onChange={(e) => setChecked((old) => { const next = new Set(old); if (e.target.checked) next.add(logicalName(f)); else next.delete(logicalName(f)); return next; })} /><LogicName item={f} kind="func" owner={f.owner} /><button className="row-delete" title="Удалить" onClick={() => remove([f])}><Trash2 size={14} /></button></div>
-            {!project.entities.some((e) => e.id === f.owner) && <label className="field"><span className="field-label">Набор</span><Select value={f.owner ?? ""} options={[{ value: "", label: "Глобальные" }, ...(project.variables.sets ?? []).map((s) => ({ value: s.id, label: s.name }))]} onChange={(next) => {
-              try { editAtomic((p) => moveFunction(p, f.name, f.owner, next || undefined)); setError(""); useStore.getState().inspectVariable("func", f.name, next || undefined); }
-              catch (e) { setError((e as Error).message); }
-            }} /></label>}
             <div className="row2"><input className="mono" spellCheck={false} autoCapitalize="off" autoCorrect="off" defaultValue={f.params.join(", ")} placeholder="Параметры: who, amount" onBlur={(e) => update(f, (x) => { x.params = e.target.value.split(",").map((v) => v.trim()).filter((v) => isValidInkName(v)); })} /><input value={f.description ?? ""} placeholder="Описание" onChange={(e) => update(f, (x) => { x.description = e.target.value || undefined; })} /></div>
             <label className="check"><input type="checkbox" checked={!!f.external} onChange={(e) => update(f, (x) => { x.external = e.target.checked || undefined; })} />Реализует игра (EXTERNAL); здесь используется запасное тело</label>
             <CodeInput value={f.body} onChange={(body) => update(f, (x) => { x.body = body; })} project={project} extra={f.params} owner={f.owner} multiline rows={5} />
@@ -204,7 +199,7 @@ export function LogicScreen() {
     <div className="screen-title"><h2>Переменные и логика</h2><button onClick={() => {
       let id = ""; useStore.getState().edit((p) => { id = addVariableSet(p); }); useStore.getState().selectLogicScope(id);
     }}><Plus size={14} /> Набор</button></div>
-    <Select value={set?.id ?? ""} options={[{ value: "", label: "Глобальные" }, ...(project.variables.sets ?? []).map((s) => ({ value: s.id, label: s.name }))]} onChange={(id) => useStore.getState().selectLogicScope(id || null)} />
+
     {set && <div className="props pad"><NamespaceField key={set.id} project={project} id={set.id} />
       <label className="field"><span className="field-label">Описание набора</span><input value={set.description ?? ""} onChange={(e) => useStore.getState().edit((p) => { p.variables.sets!.find((s) => s.id === set.id)!.description = e.target.value; })} /></label>
       <button onClick={() => { editAtomic((p) => deleteVariableSet(p, set.id)); useStore.getState().selectLogicScope(null); }}>Удалить набор</button>
@@ -221,6 +216,34 @@ export function CharactersScreen() {
   return <div className="characters-screen"><aside className="character-settings"><EntityProps key={entity.id} entity={entity} project={project} /></aside><div className="character-logic"><LogicWorkspace key={entity.id} owner={entity.id} /></div></div>;
 }
 
+export function StatsScreen() {
+  const project = useStore((s) => s.project)!;
+  const stats = useMemo(() => projectStats(project), [project]);
+  const rows: [string, number][] = [
+    ["Слова", stats.words],
+    ["Элементы", stats.elements],
+    ["Реплики", stats.lines],
+    ["Варианты игрока", stats.playerOptions],
+    ["Хабы", stats.hubs],
+    ["Условия", stats.conditions],
+    ["Заметки", stats.notes],
+    ["Переходы", stats.jumps],
+    ["Чистый Ink", stats.inkCards],
+    ["Вложенности", stats.flows],
+    ["Связи", stats.links],
+    ["Группы", stats.groups],
+    ["Сущности", stats.entities],
+    ["Переменные и LIST", stats.variables],
+    ["Функции", stats.functions],
+    ["Наборы", stats.sets],
+  ];
+  return <div className="screen-scroll"><div className="screen-content stats-content">
+    <div className="screen-title"><h2>Статистика проекта</h2></div>
+    <dl className="stats-list">{rows.map(([label, value]) => <div key={label}><dt>{label}</dt><dd>{value}</dd></div>)}</dl>
+    <p className="muted">Слова — в тексте реплик, вариантов, ремарок, описаний вложенностей и заметок. Элементы — обычные карточки и заметки на всех уровнях. Технические входы, выходы и их связи не учитываются.</p>
+  </div></div>;
+}
+
 type TestLine = { text: string; tags: string[] };
 
 export function TestingScreen() {
@@ -235,11 +258,14 @@ export function TestingScreen() {
   const log = useRef<HTMLDivElement>(null);
   const targets = useMemo(() => {
     const out: { value: string; label: string }[] = [];
-    for (const c of Object.values(project.canvases)) {
+    for (const { canvas: c } of canvasLocations(project)) {
       out.push({ value: c.id, label: c.title });
-      for (const { card } of flowCards(c)) if (card.entry) out.push({ value: `${c.id}.entry_${card.entry}`, label: `${c.title} / ${card.entry}` });
+      for (const card of c.cards) if (card.entry) {
+        const address = c.legacyId ?? c.id;
+        out.push({ value: `${address}.entry_${card.entry}`, label: `${c.title} / ${card.entry}` });
+      }
     }
-    return out;
+    return [...new Map(out.map((item) => [item.value, item])).values()];
   }, [project.canvases]);
 
   const reset = (start = target) => {
@@ -251,7 +277,9 @@ export function TestingScreen() {
     try {
       const next = new Story(check.storyJson);
       next.allowExternalFunctionFallbacks = true;
-      next.ChoosePathString(start);
+      const runtimeTarget = resolveTarget(project, start);
+      if (!runtimeTarget) throw new Error(`Стартовая точка «${start}» не найдена`);
+      next.ChoosePathString(runtimeTarget);
       setStory(next);
       setRunning(true);
     } catch (e) {
@@ -286,7 +314,7 @@ export function TestingScreen() {
   const currentTags = lines.at(-1)?.tags ?? [];
   const currentId = currentTags.find((t) => t.trim().startsWith("id:"))?.replace(/^\s*id:\s*/, "");
   const [canvasId, cardId] = currentId?.split(".") ?? [];
-  const canvasKey = Object.keys(project.canvases).find((key) => project.canvases[key].id === canvasId);
+  const canvasKey = canvasLocations(project).find(({ canvas }) => canvas.id === canvasId || canvas.legacyId === canvasId)?.canvas.id;
   const variables = [...project.variables.vars, ...project.variables.lists];
   const choices = story && !story.canContinue ? story.currentChoices : [];
 

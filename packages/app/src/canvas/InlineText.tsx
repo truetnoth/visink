@@ -5,7 +5,7 @@ import type { Card } from "@visink/core";
 import { useStore } from "../store";
 import { CodeInput } from "../ui";
 
-const FIELD_CLASS = { text: "", menuText: "menu-text", stageDirection: "stage-dir", condition: "mono" } as const;
+const FIELD_CLASS = { text: "", menuText: "menu-text", stageDirection: "stage-dir", condition: "mono", description: "" } as const;
 
 /** Черновик условия сохраняется одним изменением, как обычный текст карточки. */
 function InlineCondition({ card, placeholder, onClose }: { card: Card; placeholder: string; onClose: () => void }) {
@@ -55,14 +55,18 @@ export const InlineText = memo(function InlineText({
   mono,
   autoEdit,
   locked,
+  editOnDoubleClick,
+  openFlow,
 }: {
   card: Card;
-  field: "text" | "menuText" | "stageDirection" | "condition";
+  field: "text" | "menuText" | "stageDirection" | "condition" | "description";
   placeholder: string;
   mono?: boolean;
   /** это поле открывается на ввод, когда карточку только что создали */
   autoEdit?: boolean;
   locked?: boolean;
+  editOnDoubleClick?: boolean;
+  openFlow?: boolean;
 }) {
   const [editing, setEditing] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
@@ -123,7 +127,10 @@ export const InlineText = memo(function InlineText({
     if (text !== value) {
       editCanvas((c) => {
         const target = c.cards.find((x) => x.id === card.id);
-        if (target) target[field] = text;
+        if (target) {
+          target[field] = text;
+          if (field === "text" && target.type === "flow" && target.flow) target.flow.title = text;
+        }
       });
     }
   };
@@ -143,7 +150,7 @@ export const InlineText = memo(function InlineText({
         autoCorrect={mono ? "off" : undefined}
         data-placeholder={placeholder}
         onBlur={commit}
-        onDoubleClick={(e) => e.stopPropagation()}
+        onDoubleClick={(e) => { if (!openFlow) e.stopPropagation(); }}
         onKeyDown={(e) => {
           e.stopPropagation();
           if (e.key === "Escape") {
@@ -173,7 +180,13 @@ export const InlineText = memo(function InlineText({
       className={`${cls} ${value ? "" : "empty"}`}
       title={value || undefined}
       onClick={(e) => {
-        if (locked || e.shiftKey || e.metaKey || e.ctrlKey) return;
+        if (locked || editOnDoubleClick || e.shiftKey || e.metaKey || e.ctrlKey) return;
+        clickAt.current = { x: e.clientX, y: e.clientY };
+        setEditing(true);
+      }}
+      onDoubleClick={(e) => {
+        if (!editOnDoubleClick || locked) return;
+        e.stopPropagation();
         clickAt.current = { x: e.clientX, y: e.clientY };
         setEditing(true);
       }}

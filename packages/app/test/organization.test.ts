@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { produce } from 'immer';
-import { createProject, createCanvas, createCard, loadProject, saveProject, serializeProject, MemoryFs } from '@visink/core';
+import { createProject, createCanvas, createCard, loadProject, saveProject, serializeProject, MemoryFs, canvasLocations } from '@visink/core';
 import { checkProject } from '@visink/checker';
 import { createFolder, moveTreeItems, moveCards, renameFolder, deleteFolder, deleteVariableSet, deleteEntity } from '../src/organization';
 import { projectHierarchy, indexHierarchy } from '../src/hierarchy';
@@ -23,22 +23,22 @@ function fixture() {
 describe('организация проекта', () => {
   it('мигрирует старые группы, сохраняет пустые вложенные папки и точную копию v2', async () => {
     const p = fixture(); p.canvases.a.group = 'Акт/Сцены'; p.entities[0].group = 'Герои'; p.variables.vars[0].group = 'Состояние';
-    const fs = new MemoryFs(); fs.files = serializeProject(p);
-    // Simulate actual pre-folder version 2 files rather than normalized serialization.
+    const fs = new MemoryFs();
     fs.files.set('project.json', JSON.stringify({ ...p.settings, formatVersion: 2 }));
     fs.files.set('canvases/a.canvas.json', JSON.stringify(p.canvases.a));
+    fs.files.set('canvases/b.canvas.json', JSON.stringify(p.canvases.b));
     fs.files.set('entities.json', JSON.stringify(p.entities)); fs.files.set('variables.json', JSON.stringify(p.variables));
     const before = new Map(fs.files);
     const loaded = await loadProject(fs);
     expect(loaded.settings.folders?.map((f) => f.name)).toEqual(['Акт', 'Сцены', 'Герои', 'Состояние']);
-    const parent = loaded.canvases.a.folderId!;
+    const parent = canvasLocations(loaded).find(({ canvas }) => canvas.id === 'a')!.canvas.folderId!;
     const empty = createFolder(loaded, 'files', 'Пустая', parent);
     await saveProject(fs, loaded);
     for (const [path, text] of before) expect(fs.files.get(`.backups/pre-v3/${path}`)).toBe(text);
     const again = await loadProject(fs);
     expect(again.settings.folders?.find((f) => f.id === empty)?.parent).toBe(parent);
     expect(await saveProject(fs, again)).toEqual([]);
-    expect(indexHierarchy(projectHierarchy(again)).parents.get('file:a')).toBe(`folder:${parent}`);
+    expect(indexHierarchy(projectHierarchy(again)).parents.get('card:main:file_a')).toBe(`folder:${parent}`);
   });
   it('переносит несколько файлов, папки целиком, запрещает циклы и несовместимые разделы', () => {
     let p = fixture(); const f = createFolder(p, 'files', 'Акт'), child = createFolder(p, 'files', 'Сцены', f);
@@ -57,14 +57,14 @@ describe('организация проекта', () => {
     useStore.getState().openInMemory(p);
     useStore.getState().edit((draft) => { draft.settings.name = 'Перед удалением папки'; });
     editAtomic((draft) => deleteFolder(draft, parent));
-    expect(useStore.getState().project!.canvases).toEqual({});
+    expect(useStore.getState().project!.canvases.main.cards.filter((card) => card.type === 'flow')).toEqual([]);
     expect(useStore.getState().project!.settings.folders ?? []).toEqual([]);
     undo();
     const restored = useStore.getState().project!;
-    expect(Object.keys(restored.canvases).sort()).toEqual(['a', 'b']);
+    expect(canvasLocations(restored).map(({ canvas }) => canvas.id).sort()).toEqual(['a', 'b', 'main']);
     expect(restored.settings.folders?.map((folder) => folder.id)).toEqual([parent, child]);
     redo();
-    expect(useStore.getState().project!.canvases).toEqual({});
+    expect(useStore.getState().project!.canvases.main.cards.filter((card) => card.type === 'flow')).toEqual([]);
   });
   it('удаляет набор вместе с vars/lists/functions и восстанавливает их через undo', () => {
     const p = fixture();
@@ -86,17 +86,56 @@ describe('организация проекта', () => {
     expect(restored.variables.lists.map((v) => v.name)).toEqual(['Flags']);
     expect(restored.variables.functions.map((v) => v.name)).toEqual(['check']);
   });
-  it('удаление сущности очищает только её собственные переменные и функции', () => {
+  it('блокирует удаление сущности с собственными переменными, LIST и функциями без частичных изменений', () => {
     const p = fixture(), id = p.entities[0].id;
     p.variables.vars.push({ name: 'owned', owner: id, type: 'int', default: 1 });
     p.variables.lists.push({ name: 'Owned', owner: id, items: ['a'], initial: [] });
     p.variables.functions.push({ name: 'owned', owner: id, params: [], body: '~ return true' });
-    deleteEntity(p, id);
-    expect(p.entities.some((entity) => entity.id === id)).toBe(false);
-    expect(p.variables.vars.some((v) => v.owner === id)).toBe(false);
-    expect(p.variables.lists.some((v) => v.owner === id)).toBe(false);
-    expect(p.variables.functions.some((v) => v.owner === id)).toBe(false);
-    expect(p.variables.vars.some((v) => v.name === 'met' && !v.owner)).toBe(true);
+    const before = structuredClone(p);
+    expect(() => deleteEntity(p, id)).toThrow('битые ссылки');
+    expect(p).toEqual(before);
+  });
+  it('заменяет удалённого спикера и владельца холста на рассказчика, включая вложенности', () => {
+    const p = fixture();
+    p.entities.push({ id: 'ent_guest', kind: 'character', name: 'Гость', inkName: 'ГОСТЬ', color: '#fff' });
+    p.canvases.a.owner = 'ent_guest';
+    p.canvases.a.cards.find((card) => card.id === 'one')!.speaker = 'ent_guest';
+    const box = createCard('box', 'flow');
+    box.flow!.cards.push(createCard('nested', 'line', { speaker: 'ent_guest', text: 'Внутри' }));
+    p.canvases.b.cards.push(box);
+    deleteEntity(p, 'ent_guest');
+    expect(p.canvases.a.owner).toBe('ent_narrator');
+    expect(p.canvases.a.cards.find((card) => card.id === 'one')?.speaker).toBe('ent_narrator');
+    expect(p.canvases.b.cards.find((card) => card.id === 'box')?.flow?.cards.find((card) => card.id === 'nested')?.speaker).toBe('ent_narrator');
+    expect(p.entities.some((entity) => entity.id === 'ent_guest')).toBe(false);
+    expect(checkProject(p).diagnostics.filter((d) => d.severity === 'error')).toEqual([]);
+  });
+  it('без штатного рассказчика оставляет чистый текст вместо подстановки постороннего NPC', () => {
+    const p = fixture();
+    p.entities.push({ id: 'ent_other', kind: 'character', name: 'Другой', inkName: 'ДРУГОЙ', color: '#fff' });
+    p.canvases.a.owner = 'ent_other';
+    p.canvases.a.cards.find((card) => card.id === 'one')!.speaker = 'ent_other';
+    deleteEntity(p, 'ent_narrator');
+    deleteEntity(p, 'ent_other');
+    expect(p.canvases.a.owner).toBeUndefined();
+    expect(p.canvases.a.cards.find((card) => card.id === 'one')?.speaker).toBeUndefined();
+    expect(p.entities.find((entity) => entity.id === 'ent_player')).toBeDefined();
+  });
+  it('применяет те же правила при удалении папки сущностей', () => {
+    const p = fixture();
+    const folder = createFolder(p, 'entities', 'Герои');
+    p.entities.push({ id: 'ent_guest', kind: 'character', name: 'Гость', inkName: 'ГОСТЬ', color: '#fff', folderId: folder });
+    p.canvases.a.cards.find((card) => card.id === 'one')!.speaker = 'ent_guest';
+    deleteFolder(p, folder);
+    expect(p.canvases.a.cards.find((card) => card.id === 'one')?.speaker).toBe('ent_narrator');
+    expect(p.entities.some((entity) => entity.id === 'ent_guest')).toBe(false);
+
+    const blocked = createFolder(p, 'entities', 'С логикой');
+    p.entities.push({ id: 'ent_owned', kind: 'character', name: 'Владелец', inkName: '', color: '#fff', folderId: blocked });
+    p.variables.vars.push({ name: 'owned', owner: 'ent_owned', type: 'bool', default: false });
+    expect(() => deleteFolder(p, blocked)).toThrow('битые ссылки');
+    expect(p.entities.some((entity) => entity.id === 'ent_owned')).toBe(true);
+    expect(p.settings.folders?.some((item) => item.id === blocked)).toBe(true);
   });
   it('переносит функции с обновлением вызовов, сохраняя параметры и зависимости исходного набора', () => {
     const p = fixture();
@@ -152,10 +191,9 @@ describe('перенос карточек', () => {
     expect(checkProject(next).diagnostics.filter((d) => d.severity === 'error')).toEqual([]);
     expect(p.canvases.a.cards).toHaveLength(4);
   });
-  it('отклоняет внешние связи и начало файла без частичных изменений', () => {
+  it('атомарно отклоняет внешние связи без частичных изменений', () => {
     const p = fixture();
     expect(() => produce(p, (d) => { moveCards(d, 'a', [], ['one'], 'b', []); })).toThrow('связи');
-    expect(() => produce(p, (d) => { moveCards(d, 'a', [], ['start'], 'b', []); })).toThrow('начало');
     expect(p.canvases.b.cards).toHaveLength(1);
   });
   it('сохраняет вложенное содержимое, старт, заметки, группы, ссылки и допускает перенос между слоями', () => {
@@ -180,10 +218,10 @@ describe('перенос карточек', () => {
   it('Undo/Redo отменяет весь перенос одним шагом отдельно от соседних правок', () => {
     useStore.getState().openInMemory(fixture());
     useStore.getState().edit((p) => { p.settings.name = 'Перед переносом'; });
-    editAtomic((p) => { moveCards(p, 'a', [], ['one', 'two'], 'b', []); });
-    undo(); expect(useStore.getState().project!.canvases.a.cards).toHaveLength(4);
+    editAtomic((p) => { moveCards(p, 'main', ['file_a'], ['one', 'two'], 'main', ['file_b']); });
+    undo(); expect(canvasLocations(useStore.getState().project!).find(({ canvas }) => canvas.id === 'a')!.canvas.cards.filter((card) => !['entry', 'exit'].includes(card.type))).toHaveLength(4);
     expect(useStore.getState().project!.settings.name).toBe('Перед переносом');
-    redo(); expect(useStore.getState().project!.canvases.b.cards).toHaveLength(3);
+    redo(); expect(canvasLocations(useStore.getState().project!).find(({ canvas }) => canvas.id === 'b')!.canvas.cards.filter((card) => !['entry', 'exit'].includes(card.type))).toHaveLength(3);
   });
 });
 

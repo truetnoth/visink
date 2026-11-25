@@ -3,7 +3,7 @@ import appPackage from "../package.json";
 import { draggedItems, endTreeDrag } from "./treeDrag";
 import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import type { CSSProperties } from "react";
-import { ChevronRight, CircleHelp, FilePlus, FolderOpen, GitBranch, Monitor, Moon, PanelLeft, Play, Redo2, Save, Settings as SettingsIcon, Sun, Undo2, Users, Variable, X } from "lucide-react";
+import { ArrowLeft, ArrowRight, BarChart3, ChevronRight, CircleHelp, FilePlus, FolderOpen, GitBranch, PanelLeft, Play, Redo2, Save, Settings as SettingsIcon, Undo2, Users, Variable, X } from "lucide-react";
 import { useStore as useZustand } from "zustand";
 import { canvasAtPath } from "@visink/core";
 import { CanvasView, isTyping, TYPE_LABEL } from "./CanvasView";
@@ -14,18 +14,13 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { fsAccessSupported } from "./browserFs";
 import type { AutosaveSec } from "./prefs";
 import { AUTOSAVE_LABEL, AUTOSAVE_OPTIONS, FONT_MAX, FONT_MIN, usePrefs } from "./prefs";
-import type { ThemeMode } from "./theme";
-import { useTheme } from "./theme";
 import type { PanelSizes } from "./ui";
 import { IconButton, Select, Splitter, usePanelSizes } from "./ui";
 
 const LogicScreen = lazy(() => import("./Screens").then((m) => ({ default: m.LogicScreen })));
 const CharactersScreen = lazy(() => import("./Screens").then((m) => ({ default: m.CharactersScreen })));
 const TestingScreen = lazy(() => import("./Screens").then((m) => ({ default: m.TestingScreen })));
-
-const THEME_NEXT: Record<ThemeMode, ThemeMode> = { system: "light", light: "dark", dark: "system" };
-const THEME_LABEL: Record<ThemeMode, string> = { system: "системная", light: "светлая", dark: "тёмная" };
-const THEME_ICON = { system: Monitor, light: Sun, dark: Moon };
+const StatsScreen = lazy(() => import("./Screens").then((m) => ({ default: m.StatsScreen })));
 
 type Panels = ReturnType<typeof usePanelSizes>;
 const isError = (text: string) => /^(Ошибка|Не удалось)/.test(text);
@@ -50,7 +45,7 @@ function ViewSwitcher() {
   const flowPath = useStore((s) => s.flowPath);
   const root = project && key ? project.canvases[key] : null;
   const previousView = useRef<"canvas" | "logic" | "characters">("canvas");
-  if (view !== "testing") previousView.current = view;
+  if (view !== "testing" && view !== "stats") previousView.current = view;
   return <nav className="view-switcher" aria-label="Режим работы">
     <button className={`testing-toggle ${view === "testing" ? "on" : ""}`} aria-pressed={view === "testing"} onClick={() => useStore.getState().setView(view === "testing" ? previousView.current : "testing")}><Play size={15} />Тестирование</button>
     {view === "canvas" && root && <div className="flow-breadcrumbs" aria-label="Путь по вложенностям">
@@ -72,13 +67,17 @@ function Toolbar({ panels, onAbout, onSettings }: { panels: Panels; onAbout: () 
   const { openProject, save } = useStore.getState();
   const canUndo = useZustand(useStore.temporal, (s) => s.pastStates.length > 0);
   const canRedo = useZustand(useStore.temporal, (s) => s.futureStates.length > 0);
-  const theme = useTheme((s) => s.mode);
+  const backCount = useStore((s) => s.navBackCount);
+  const forwardCount = useStore((s) => s.navForwardCount);
   return (
     <header className="toolbar">
       {project && <>
         <IconButton icon={FilePlus} label="Новый проект" onClick={() => openProject(true)} />
         <IconButton icon={FolderOpen} label="Открыть проект…" onClick={() => openProject(false)} />
         <IconButton icon={Save} primary badge={dirty} label="Сохранить" onClick={() => save()} />
+        <span className="toolbar-sep" />
+        <IconButton icon={ArrowLeft} label="Назад по навигации" onClick={() => useStore.getState().navigateBack()} disabled={!backCount} />
+        <IconButton icon={ArrowRight} label="Вперёд по навигации" onClick={() => useStore.getState().navigateForward()} disabled={!forwardCount} />
         <span className="toolbar-sep" />
         <IconButton icon={Undo2} label="Отменить (Ctrl+Z)" onClick={undo} disabled={!canUndo} />
         <IconButton icon={Redo2} label="Вернуть (Ctrl+Shift+Z)" onClick={redo} disabled={!canRedo} />
@@ -88,7 +87,7 @@ function Toolbar({ panels, onAbout, onSettings }: { panels: Panels; onAbout: () 
       {project && <IconButton icon={PanelLeft} className={`toggle ${panels.sizes.showLeft ? "on" : ""}`} label={`${panels.sizes.showLeft ? "Скрыть" : "Показать"} дерево проекта (Ctrl+[)`} onClick={() => panels.toggle("showLeft")} />}
       <IconButton icon={SettingsIcon} label="Настройки" onClick={onSettings} />
       <IconButton icon={CircleHelp} label="О программе и горячие клавиши" onClick={onAbout} />
-      <IconButton icon={THEME_ICON[theme]} label={`Тема: ${THEME_LABEL[theme]}`} onClick={() => useTheme.getState().setMode(THEME_NEXT[theme])} />
+      {project && <IconButton icon={BarChart3} label="Статистика проекта" onClick={() => useStore.getState().setView("stats")} />}
     </header>
   );
 }
@@ -114,11 +113,11 @@ function Settings({ onClose }: { onClose: () => void }) {
 function About({ onClose }: { onClose: () => void }) {
   return <div className="modal-backdrop" onMouseDown={onClose}><div className="modal" onMouseDown={(e) => e.stopPropagation()}><div className="modal-head"><img className="about-logo" src={brandLogo} alt="Visink" /><IconButton icon={X} label="Закрыть (Esc)" onClick={onClose} /></div>
     <p className="muted">Визуальный редактор диалогов: карточки на холсте → обычные .ink-файлы для движка.</p>
-    <h3>Как игра запускает диалог</h3><p>Каждый файл — отдельный диалог. Игра вызывает <span className="mono">ChoosePathString("dean")</span> — диалог идёт с карточки-начала. Дополнительная точка входа задаётся через правый клик по карточке. Функции «Реализует игра» привязываются через <span className="mono">BindExternalFunction</span>.</p>
+    <h3>Как игра запускает диалог</h3><p>Главный холст проекта соответствует <span className="mono">main.ink</span>. Его стартовую карточку можно назначить через контекстное меню. Каждая вложенность экспортируется отдельным knot. Прежние адреса вроде <span className="mono">ChoosePathString("dean")</span> и дополнительные точки входа сохраняются при миграции. Функции «Реализует игра» привязываются через <span className="mono">BindExternalFunction</span>.</p>
     <h3>Горячие клавиши</h3><table className="keys"><tbody>
       <tr><td>Двойной щелчок по пустому месту</td><td>новая реплика</td></tr>
       <tr><td>Тип ответа на карточке</td><td>изменить прямо на холсте</td></tr>
-      <tr><td>Щелчок по названию / двойной по телу вложенности</td><td>имя / открыть вложенный поток</td></tr>
+      <tr><td>Двойной по названию / щелчок по описанию / двойной по телу вложенности</td><td>имя / описание / открыть вложенность</td></tr>
       <tr><td>Двойной щелчок по входу / выходу</td><td>условие / действие</td></tr>
       <tr><td>Щелчок по правому пину</td><td>1–4 новые карточки через каскадное меню</td></tr>
       <tr><td>Щелчок / Shift+щелчок по стрелке</td><td>выделить одну / несколько стрелок</td></tr>
@@ -220,7 +219,7 @@ export function App() {
       }
     };
     const onEscape = (e: KeyboardEvent) => {
-      if (e.key !== "Escape" || document.querySelector(".popup")) return;
+      if (e.key !== "Escape" || document.querySelector(".popup, .selection-color-picker")) return;
       if (about) { setAbout(false); e.preventDefault(); e.stopImmediatePropagation(); return; }
       if (settings) { setSettings(false); e.preventDefault(); e.stopImmediatePropagation(); return; }
       if (useStore.getState().editorOpen) { useStore.getState().closeEditor(); e.preventDefault(); e.stopImmediatePropagation(); return; }
@@ -254,6 +253,7 @@ export function App() {
           {view === "logic" && <Suspense fallback={<div className="empty-state">Загрузка…</div>}><LogicScreen /></Suspense>}
           {view === "characters" && <Suspense fallback={<div className="empty-state">Загрузка…</div>}><CharactersScreen /></Suspense>}
           {view === "testing" && <Suspense fallback={<div className="empty-state">Загрузка…</div>}><TestingScreen /></Suspense>}
+          {view === "stats" && <Suspense fallback={<div className="empty-state">Загрузка…</div>}><StatsScreen /></Suspense>}
           {view === "canvas" && <BottomPanel open={sizes.showDock} onToggle={(open) => toggle("showDock", open)} splitter={<Splitter direction="row" onDrag={drag((o, d) => ({ dock: o.dock - d }))} onReset={() => reset("dock")} />} />}
         </main>
       </div>

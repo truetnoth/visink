@@ -1,58 +1,76 @@
 import { NamespaceField } from "../NamespaceField";
 // свойства файла (Canvas), проекта и персонажей (Entity)
-import { useMemo, useRef, useState } from "react";
+import { useRef, useState } from "react";
 import type { Canvas, Entity, Project } from "@visink/core";
-import { flowCards, isValidInkName } from "@visink/core";
-import { useStore } from "../store";
+import { canvasAtPath, canvasLocations, flowCards, isValidInkName } from "@visink/core";
+import { editAtomic, useStore } from "../store";
+import { deleteEntity } from "../organization";
 import { askUser } from "../tauriFs";
-import { jumpTargets, renameCanvas } from "../ops";
-import { Combobox } from "../ui";
+import { deleteCards, renameNestedCanvas } from "../ops";
 import { characterOptions, Field, PortraitPreview, Select, Text } from "./fields";
 
 export function CanvasProps({ canvas, canvasKey, project }: { canvas: Canvas; canvasKey: string; project: Project }) {
   const { edit, setActiveCanvas } = useStore.getState();
+  const flowPath = useStore((s) => s.flowPath);
+  const nested = flowPath.length > 0;
   const [id, setId] = useState(canvas.id);
   const [prevKey, setPrevKey] = useState(canvasKey);
-  if (prevKey !== canvasKey) {
-    setPrevKey(canvasKey);
+  const identity = `${canvasKey}:${flowPath.join("/")}`;
+  if (prevKey !== identity) {
+    setPrevKey(identity);
     setId(canvas.id);
   }
-  const idTaken = id !== canvas.id && Object.values(project.canvases).some((c) => c.id === id);
+  const idTaken = id !== canvas.id && (["main", "globals"].includes(id.toLowerCase()) || canvasLocations(project).some(({ canvas: c }) => c.id.toLowerCase() === id.toLowerCase()));
   const applyId = () => {
-    if (id === canvas.id || !isValidInkName(id) || idTaken) return;
-    let key = "";
-    edit((p) => (key = renameCanvas(p, canvasKey, { id })));
-    setActiveCanvas(key);
+    if (!nested || id === canvas.id || !isValidInkName(id) || idTaken) return;
+    edit((p) => renameNestedCanvas(p, flowPath, id));
+    setActiveCanvas(canvasKey, flowPath);
   };
   return (
     <div className="props">
       <div className="props-title">Файл</div>
       <Field label="Название">
-        <Text value={canvas.title} onChange={(v) => edit((p) => (p.canvases[canvasKey].title = v))} />
+        <Text value={canvas.title} onChange={(v) => edit((p) => {
+          const current = canvasAtPath(p.canvases[canvasKey], flowPath);
+          if (!current) return;
+          current.title = v;
+          if (!nested && current.id === "main") p.settings.name = v;
+          if (nested) {
+            const parent = canvasAtPath(p.canvases[canvasKey], flowPath.slice(0, -1));
+            const owner = parent?.cards.find((card) => card.id === flowPath.at(-1));
+            if (owner?.type === "flow") owner.text = v;
+          }
+        })} />
       </Field>
       <Field
         label="Имя файла и узла ink"
         hint={!isValidInkName(id) ? <span className="bad">только латиница, цифры и _</span> : idTaken ? <span className="bad">имя занято</span> : "переходы в этот файл обновятся сами"}
       >
-        <input className="mono" spellCheck={false} autoCapitalize="off" autoCorrect="off" value={id} onChange={(e) => setId(e.target.value)} onBlur={applyId} onKeyDown={(e) => e.key === "Enter" && applyId()} />
+        <input className="mono" spellCheck={false} autoCapitalize="off" autoCorrect="off" value={id} disabled={!nested} onChange={(e) => setId(e.target.value)} onBlur={applyId} onKeyDown={(e) => e.key === "Enter" && applyId()} />
       </Field>
       <Field label="Владелец" hint="главный собеседник: спикер новых реплик">
         <Select
           value={canvas.owner ?? ""}
-          onChange={(v) => edit((p) => (p.canvases[canvasKey].owner = v || undefined))}
+          onChange={(v) => edit((p) => {
+            const current = canvasAtPath(p.canvases[canvasKey], flowPath);
+            if (current) current.owner = v || undefined;
+          })}
           options={characterOptions(project, "— не задан —").filter((o) => o.hint !== "игрок")}
         />
       </Field>
-      <button
+      {nested && <button
         className="danger"
         onClick={async () => {
-          if (!(await askUser(`Удалить файл «${canvas.title}»? Отменить можно через Ctrl+Z.`))) return;
-          edit((p) => delete p.canvases[canvasKey]);
-          setActiveCanvas(null);
+          if (!(await askUser(`Удалить вложенность «${canvas.title}»? Отменить можно через Ctrl+Z.`))) return;
+          edit((p) => {
+            const parent = canvasAtPath(p.canvases[canvasKey], flowPath.slice(0, -1));
+            if (parent) deleteCards(parent, [flowPath.at(-1)!]);
+          });
+          setActiveCanvas(canvasKey, flowPath.slice(0, -1));
         }}
       >
-        Удалить файл
-      </button>
+        Удалить вложенность
+      </button>}
     </div>
   );
 }
@@ -60,17 +78,14 @@ export function CanvasProps({ canvas, canvasKey, project }: { canvas: Canvas; ca
 export function ProjectProps({ project }: { project: Project }) {
   const { edit, pickBuildDir } = useStore.getState();
   const buildFs = useStore((s) => s.buildFs);
-  const targets = useMemo(() => jumpTargets(project), [project]);
   return (
     <div className="props">
       <div className="props-title">Проект</div>
       <Field label="Название">
-        <Text value={project.settings.name} onChange={(v) => edit((p) => (p.settings.name = v))} />
-      </Field>
-      <Field
-        label="Файл запуска"
-      >
-        <Combobox mono value={project.settings.start ?? ""} options={targets} placeholder="например, dean" onChange={(v) => edit((p) => (p.settings.start = v || undefined))} />
+        <Text value={project.settings.name} onChange={(v) => edit((p) => {
+          p.settings.name = v;
+          if (p.canvases.main) p.canvases.main.title = v;
+        })} />
       </Field>
       <Field label="Папка сборки внутри проекта" hint={buildFs ? `сейчас сборка пишется во внешнюю папку «${buildFs.name}»` : undefined}>
         <Text mono value={project.settings.buildDir} onChange={(v) => edit((p) => (p.settings.buildDir = v))} />
@@ -90,6 +105,8 @@ export function EntityProps({ entity, project }: { entity: Entity; project: Proj
       e[field] = value;
     });
   const uses = Object.values(project.canvases).reduce((n, c) => n + flowCards(c).filter((x) => x.card.speaker === entity.id).length, 0);
+  const owned = [...project.variables.vars, ...project.variables.lists, ...project.variables.functions].some((v) => v.owner === entity.id);
+  const [deleteError, setDeleteError] = useState("");
   const [naming, setNaming] = useState(false);
   const [name, setName] = useState(entity.name);
   const cancelled = useRef(false);
@@ -112,15 +129,21 @@ export function EntityProps({ entity, project }: { entity: Entity; project: Proj
       <div className="muted pad">Реплик: {uses}</div>
       <button
         className="danger"
-        disabled={uses > 0 || [...project.variables.vars, ...project.variables.lists, ...project.variables.functions].some((v) => v.owner === entity.id)}
-        title={uses ? "Сначала уберите персонажа из реплик" : ""}
+        disabled={owned}
+        title={owned ? "Сначала удалите собственные переменные, LIST и функции сущности" : uses ? "Спикер связанных реплик будет заменён на рассказчика" : undefined}
         onClick={() => {
-          edit((p) => (p.entities = p.entities.filter((e) => e.id !== entity.id)));
-          selectEntity(null);
+          try {
+            editAtomic((p) => deleteEntity(p, entity.id));
+            setDeleteError("");
+            selectEntity(null);
+          } catch (e) {
+            setDeleteError((e as Error).message);
+          }
         }}
       >
         Удалить сущность
       </button>
+      {deleteError && <div className="bad" role="alert">{deleteError}</div>}
     </div>
   );
 }

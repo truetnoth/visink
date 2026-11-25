@@ -1,9 +1,12 @@
 import { describe, expect, it } from "vitest";
+import { Story } from "inkjs/full";
 import { checkProject } from "@visink/checker";
-import { createCard, linkId } from "@visink/core";
+import { createCard, createCanvas, createProject, linkId, prepareProject, canvasLocations } from "@visink/core";
 import { demoProject } from "../../checker/test/fixtures";
-import { addBranchCards, addCanvas, addNestedFlow, addNextLine, addPlayerOption, alignToGrid, connect, copyFragment, deleteCards, deleteLinks, jumpTargets, parseFragment, pasteFragment, renameVariable, replaceIdent, snapPoint, variableUsages } from "../src/ops";
+import { addBranchCards, addCanvas, addCard, addNestedFlow, addNextLine, addNote, addPlayerOption, alignToGrid, connect, copyFragment, deleteCards, deleteLinks, jumpTargetLocation, jumpTargets, parseFragment, pasteFragment, renameVariable, renameNestedCanvas, replaceIdent, setCanvasStart, snapPoint, variableUsages } from "../src/ops";
 import { searchProject } from "../src/search";
+import { moveCards } from "../src/organization";
+import { moveVariable } from "../src/namespaceOps";
 
 describe("linkId", () => {
   it("id стрелки: from>to>port, без порта — пустой хвост", () => {
@@ -78,6 +81,29 @@ describe("переменные", () => {
     expect(p.canvases.advisor.cards.find((c) => c.id === "a8")!.condition).toBe("trust < 0");
     expect(checkProject(p).diagnostics.filter((d) => d.severity === "error")).toEqual([]);
   });
+  it("rename/move/поиск обходят только распознанные шаблоны реплик", () => {
+    const p = createProject("text-references");
+    p.variables.sets = [{ id: "quest", name: "quest" }];
+    p.variables.vars.push({ name: "roll", type: "int", default: 1 }, { name: "roll", owner: "quest", type: "int", default: 2 });
+    const card = createCard("line", "line", {
+      speaker: "ent_narrator",
+      text: "Бросок {roll}, набор {quest.roll}, экран \\{roll}, литералы {версия 2} и {заметка про roll}",
+      menuText: "Ход {roll + 1}",
+    });
+    p.canvases.main.cards.push(card);
+    expect(variableUsages(p, "roll").map((usage) => usage.card)).toEqual(["line"]);
+    renameVariable(p, "roll", "score");
+    expect(card.text).toBe("Бросок {score}, набор {quest.roll}, экран \\{roll}, литералы {версия 2} и {заметка про roll}");
+    expect(card.menuText).toBe("Ход {score + 1}");
+    renameVariable(p, "roll", "bonus", "quest");
+    expect(card.text).toContain("набор {quest.bonus}");
+    expect(variableUsages(p, "bonus", "quest").map((usage) => usage.card)).toEqual(["line"]);
+    moveVariable(p, "score", undefined, "quest");
+    expect(card.text).toContain("Бросок {quest.score}");
+    expect(card.menuText).toBe("Ход {quest.score + 1}");
+    expect(searchProject(p, "quest.score").get("card")?.map((hit) => hit.card)).toEqual(["line"]);
+    expect(checkProject(p).diagnostics.filter((diagnostic) => diagnostic.severity === "error")).toEqual([]);
+  });
 });
 
 describe("функции", () => {
@@ -98,22 +124,67 @@ describe("функции", () => {
   });
 });
 
-describe("начало файла", () => {
-  it("новый файл начинается с первой карточки, удаление начала переносит его", () => {
+describe("границы холста", () => {
+  it("новый файл является вложенностью main с явными входом и выходом; границы не удаляются", () => {
     const p = demoProject();
-    const key = addCanvas(p, "Библиотекарь");
-    const c = p.canvases[key];
-    expect(c.start).toBe(c.cards[0].id);
-    const dean = p.canvases.dean;
-    deleteCards(dean, ["c1"]);
-    expect(dean.start).toBe("c2");
+    const id = addCanvas(p, "Библиотекарь");
+    const card = p.canvases.main.cards.find((c) => c.id === id)!;
+    expect(card.flow?.cards.map((c) => c.type)).toEqual(["entry", "exit"]);
+    deleteCards(card.flow!, ["__entry", "__exit"]);
+    expect(card.flow?.cards.map((c) => c.type)).toEqual(["entry", "exit"]);
+    expect(card.flow?.layout.__entry).toBeDefined();
   });
 
-  it("без начала — предупреждение и догадка", () => {
+  it("удаление старого поля start не создаёт предупреждение: начало задаёт «Вход»", () => {
     const p = demoProject();
     delete p.canvases.dean.start;
     const r = checkProject(p);
-    expect(r.diagnostics).toContainEqual(expect.objectContaining({ code: "no-start", canvas: "dean", card: "c1" }));
+    expect(r.diagnostics.some((d) => d.code === "no-start")).toBe(false);
+    expect(r.storyJson).toBeTruthy();
+  });
+
+  it("после удаления единственной корневой карточки новая снова становится стартом", () => {
+    const p = createProject("start-after-delete");
+    const main = p.canvases.main;
+    const first = addCard(main, "line", { x: 0, y: 0 }, { speaker: "ent_narrator", text: "Первая." });
+    const entry = main.cards.find((card) => card.type === "entry")!;
+    const startLink = main.links.find((link) => link.from === entry.id)!;
+    startLink.condition = "true";
+    startLink.action = "true";
+    setCanvasStart(main, first.id);
+    expect(main.links.find((link) => link.from === entry.id)).toBe(startLink);
+
+    deleteCards(main, [first.id]);
+    const exit = main.cards.find((card) => card.type === "exit")!;
+    expect(main.links.find((link) => link.from === entry.id)?.to).toBe(exit.id);
+    const second = addCard(main, "line", { x: 0, y: 0 }, { speaker: "ent_narrator", text: "Новый старт." });
+    expect(main.links.find((link) => link.from === entry.id)).toMatchObject({ to: second.id });
+    expect(main.links.find((link) => link.from === entry.id)?.direct).toBeUndefined();
+    const result = checkProject(p);
+    expect(result.diagnostics.filter((diagnostic) => diagnostic.severity === "error")).toEqual([]);
+    const story = new Story(result.storyJson!);
+    story.ChoosePathString("main");
+    expect(story.ContinueMaximally()).toBe("Новый старт.\n");
+  });
+
+  it("ручной перенос корневого старта создаёт обычную связь без direct", () => {
+    const p = createProject("manual-start");
+    const main = p.canvases.main;
+    addCard(main, "hub", { x: 0, y: 0 });
+    const second = addCard(main, "line", { x: 300, y: 0 }, { speaker: "ent_narrator", text: "Старт." });
+    setCanvasStart(main, second.id);
+    const entry = main.cards.find((card) => card.type === "entry")!;
+    expect(main.links.find((link) => link.from === entry.id)).toMatchObject({ to: second.id, kind: "divert" });
+    expect(main.links.find((link) => link.from === entry.id)?.direct).toBeUndefined();
+  });
+
+  it("не восстанавливает намеренно разорванный старт вложенности при удалении", () => {
+    const box = createCard("box", "flow");
+    const nested = box.flow!;
+    const line = addCard(nested, "line", { x: 0, y: 0 }, { speaker: "ent_narrator", text: "Внутри." });
+    deleteCards(nested, [line.id]);
+    const entry = nested.cards.find((card) => card.type === "entry")!;
+    expect(nested.links.some((link) => link.from === entry.id)).toBe(false);
   });
 });
 
@@ -156,6 +227,11 @@ describe("подсказки при вводе", () => {
 });
 
 describe("копировать и вставить", () => {
+  it("новая заметка не содержит служебной подписи", () => {
+    const canvas = createProject("notes").canvases.main;
+    expect(addNote(canvas, { x: 20, y: 40 }).text).toBe("");
+  });
+
   it("новые id, стрелки только внутри куска, вход не дублируется", () => {
     const p = demoProject();
     const dean = p.canvases.dean;
@@ -188,10 +264,10 @@ describe("копировать и вставить", () => {
   it("сохраняет ручные размеры заметки при вставке", () => {
     const p = demoProject();
     const dean = p.canvases.dean;
-    dean.notes.push({ id: "note_sized", text: "Размеры", x: 40, y: 60, w: 320, h: 180 });
+    dean.notes.push({ id: "note_sized", text: "Размеры", color: "#ef4444", x: 40, y: 60, w: 320, h: 180 });
     const fragment = copyFragment(dean, ["note_sized"])!;
     const [id] = pasteFragment(p, dean, fragment, { x: 500, y: 300 });
-    expect(dean.notes.find((note) => note.id === id)).toMatchObject({ w: 320, h: 180, x: 500, y: 300 });
+    expect(dean.notes.find((note) => note.id === id)).toMatchObject({ color: "#ef4444", w: 320, h: 180, x: 500, y: 300 });
   });
 
   it("чужой текст — не кусок холста", () => {
@@ -245,8 +321,31 @@ describe("вложенные потоки и области имён", () => {
       createCard("nested_line", "line", { speaker: "ent_dean", text: "Скрытая реплика" }),
     ];
     const targets = jumpTargets(p);
-    expect(targets.map((target) => target.value)).toEqual(expect.arrayContaining(["dean", "dean.c1", "dean.nested_hub", "dean.nested_flow", "dean.nested_line"]));
-    expect(targets.find((target) => target.value === "dean.nested_line")).toMatchObject({ label: "Скрытая реплика · nested_line", hint: "Декан · внутри вложенности · Реплика" });
+    expect(targets.map((target) => target.value)).toEqual(expect.arrayContaining(["dean", "dean.c1", "dean_c1.nested_hub", "dean_c1.nested_flow", "dean_c1.nested_line"]));
+    expect(targets.flatMap((target) => target.aliases ?? [])).toEqual(expect.arrayContaining(["dean.nested_hub", "dean.nested_flow", "dean.nested_line"]));
+    expect(targets.find((target) => target.value === "dean_c1.nested_line")).toMatchObject({ label: "Скрытая реплика · nested_line" });
+  });
+
+  it("не дублирует technical/legacy-адреса и сохраняет именованные входы отдельно", () => {
+    const p = createProject("dedupe-targets");
+    const main = p.canvases.main;
+    main.legacyId = "main";
+    const box = createCard("nested_box", "flow");
+    box.flow!.legacyId = "main";
+    box.flow!.cards.push(createCard("nested_same", "line", { speaker: "ent_narrator", text: "Повтор" }));
+    main.cards.push(
+      createCard("root_same", "line", { speaker: "ent_narrator", text: "Повтор", entry: "begin" }),
+      box,
+      createCard("saved_jump", "jump", { target: "main.nested_same" }),
+    );
+    const targets = jumpTargets(p);
+    const cards = targets.filter((target) => target.label.startsWith("Повтор"));
+    expect(cards.map((target) => target.value).sort()).toEqual(["flow_nested_box.nested_same", "main.root_same"]);
+    expect(cards.find((target) => target.value === "flow_nested_box.nested_same")?.aliases).toContain("main.nested_same");
+    expect(cards.find((target) => target.value === "main.root_same")?.aliases ?? []).not.toContain("main.nested_same");
+    expect(targets.find((target) => target.value === "main.entry_begin")).toMatchObject({ label: "Вход: begin", aliases: ["main.begin"] });
+    expect(main.cards.find((card) => card.id === "saved_jump")?.target).toBe("main.nested_same");
+    expect(jumpTargetLocation(p, "main.nested_same")?.card?.id).toBe("nested_same");
   });
 
   it("поиск, подсказки, использования и rename различают владельцев", async () => {
@@ -270,5 +369,107 @@ describe("вложенные потоки и области имён", () => {
     expect(p.canvases.advisor.cards.find((c) => c.id === "a1")!.action).toBe("ent_advisor.rapport += 1");
     expect(p.variables.functions.find((f) => f.owner === "ent_advisor")!.body).toBe("~ return rapport > 1");
     expect(p.variables.functions.find((f) => f.owner === "ent_dean")!.body).toBe("~ return trust > 0");
+  });
+});
+
+describe("навигация по целям перехода", () => {
+  it("разрешает main, корневые и legacy-адреса в реальные видимые карточки", () => {
+    const p = prepareProject(demoProject());
+    expect(jumpTargetLocation(p, "main")?.card?.id).not.toBe("__entry");
+    expect(jumpTargetLocation(p, "main.file_dean")).toMatchObject({ canvas: p.canvases.main, card: { id: "file_dean", type: "flow" } });
+    expect(jumpTargetLocation(p, "dean.first_meeting")).toMatchObject({ canvas: { id: "dean" }, card: { id: "c1" } });
+    expect(jumpTargetLocation(p, "dean.entry_first_meeting")).toMatchObject({ canvas: { id: "dean" }, card: { id: "c1" } });
+    expect(jumpTargetLocation(p, "advisor.office")).toMatchObject({ canvas: { id: "advisor" }, card: { id: "a1" } });
+    expect(jumpTargetLocation(p, "main.missing")).toBeNull();
+  });
+});
+
+
+describe("технические границы при копировании и переносе", () => {
+  it("не копирует связи границ и локально связывает одинаковые id на разных уровнях", () => {
+    const p = demoProject();
+    const source = createCard("container", "flow", { text: "Контейнер" });
+    const outerLine = addCard(source.flow!, "line", { x: 300, y: 0 }, { speaker: "ent_narrator", text: "Outer" }, p.canvases.dean);
+    connect(source.flow!, outerLine.id, source.flow!.cards.find((c) => c.type === "exit")!.id);
+    const nested = addCard(source.flow!, "flow", { x: 600, y: 0 }, { text: "Nested" }, p.canvases.dean);
+    const innerLine = addCard(nested.flow!, "line", { x: 300, y: 0 }, { speaker: "ent_narrator", text: "Inner" }, p.canvases.dean);
+    connect(nested.flow!, innerLine.id, nested.flow!.cards.find((c) => c.type === "exit")!.id);
+    p.canvases.dean.cards.push(source);
+    p.canvases.dean.layout[source.id] = { x: 0, y: 0 };
+    const fragment = copyFragment(p.canvases.dean, [source.id])!;
+    expect(fragment.links).toEqual([]);
+    const [id] = pasteFragment(p, p.canvases.advisor, fragment);
+    const copy = p.canvases.advisor.cards.find((card) => card.id === id)!;
+    expect(copy.flow!.id).not.toBe(source.flow!.id);
+    const copyNested = copy.flow!.cards.find((card) => card.type === "flow")!;
+    expect(copyNested.flow!.id).not.toBe(nested.flow!.id);
+    for (const canvas of [copy.flow!, copyNested.flow!]) {
+      const entry = canvas.cards.find((card) => card.type === "entry")!;
+      const exit = canvas.cards.find((card) => card.type === "exit")!;
+      const entryLink = canvas.links.find((link) => link.from === entry.id)!;
+      expect(canvas.cards.some((card) => card.id === entryLink.to)).toBe(true);
+      expect(canvas.links.filter((link) => link.to === exit.id).every((link) => canvas.cards.some((card) => card.id === link.from))).toBe(true);
+    }
+    expect(checkProject(p).diagnostics.filter((d) => d.severity === "error")).toEqual([]);
+  });
+
+  it("при переносе условия сохраняет обе полные связи yes/no к выходу целевого холста", () => {
+    const p = prepareProject(demoProject());
+    const source = canvasLocations(p).find(({ canvas }) => canvas.id === "dean")!.canvas;
+    const target = canvasLocations(p).find(({ canvas }) => canvas.id === "advisor")!.canvas;
+    const gate = createCard("gate", "condition", { condition: "logic > 0" });
+    source.cards.push(gate);
+    source.layout[gate.id] = { x: 0, y: 0 };
+    const exit = source.cards.find((card) => card.type === "exit")!;
+    source.links.push(
+      { from: gate.id, to: exit.id, port: "yes", order: 0, kind: "divert", condition: "thesis_changed", action: "logic = 1" },
+      { from: gate.id, to: exit.id, port: "no", order: 1, kind: "divert", action: "logic = 2" },
+    );
+    moveCards(p, "main", ["file_dean"], [gate.id], "main", ["file_advisor"]);
+    const targetExit = target.cards.find((card) => card.type === "exit")!;
+    expect(target.links.filter((link) => link.from === gate.id)).toEqual([
+      { from: gate.id, to: targetExit.id, port: "yes", order: 0, kind: "divert", condition: "thesis_changed", action: "logic = 1" },
+      { from: gate.id, to: targetExit.id, port: "no", order: 1, kind: "divert", action: "logic = 2" },
+    ]);
+    expect(checkProject(p).diagnostics.filter((d) => d.severity === "error")).toEqual([]);
+  });
+});
+
+
+describe("имена и адреса канвасов", () => {
+  it("резервирует globals/main и различает физические имена без учёта регистра", () => {
+    const p = demoProject();
+    const first = addCanvas(p, "Globals");
+    const second = addCanvas(p, "globals");
+    const ids = [first, second].map((id) => p.canvases.main.cards.find((card) => card.id === id)!.flow!.id);
+    expect(ids[0].toLowerCase()).toBe("globals_2");
+    expect(ids[1].toLowerCase()).toBe("globals_3");
+    expect(checkProject(p).diagnostics.filter((d) => d.severity === "error")).toEqual([]);
+  });
+
+  it("техническое переименование корня сохраняет новые и старые card/entry адреса", () => {
+    const p = createProject("rename-legacy");
+    const dialog = createCanvas("dialog", "Диалог");
+    const box = createCard("box", "flow", { text: "Блок" });
+    box.flow = createCanvas("dialog_box", "Блок");
+    box.flow.cards = [createCard("inner", "line", { speaker: "ent_narrator", text: "Внутри.", entry: "intro" })];
+    box.flow.start = "inner";
+    dialog.cards = [box];
+    dialog.start = box.id;
+    p.canvases = { dialog };
+    p.settings.start = "dialog";
+    prepareProject(p);
+    const jump = createCard("jump", "jump", { target: "dialog.inner" });
+    p.canvases.main.cards.push(jump);
+    p.canvases.main.layout[jump.id] = { x: 0, y: 0 };
+    renameNestedCanvas(p, ["file_dialog"], "renamed_dialog");
+    expect(jump.target).toBe("renamed_dialog.inner");
+    const r = checkProject(p);
+    expect(r.diagnostics.filter((d) => d.severity === "error")).toEqual([]);
+    for (const target of ["dialog.inner", "renamed_dialog.inner", "dialog.entry_intro", "renamed_dialog.entry_intro"]) {
+      const story = new Story(r.storyJson!);
+      story.ChoosePathString(target);
+      expect(story.ContinueMaximally()).toBe("Внутри.\n");
+    }
   });
 });

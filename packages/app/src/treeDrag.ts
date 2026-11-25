@@ -1,4 +1,4 @@
-import { flowCards, qualifiedName, type Project } from '@visink/core';
+import { canvasLocations, flowCards, qualifiedName, type Project } from '@visink/core';
 import type { TreeNode } from './hierarchy';
 import type { TreeItem, TreeDestination } from './organization';
 
@@ -14,7 +14,7 @@ export function treeItem(node: TreeNode): TreeItem | null {
 }
 export function treeDestination(node: TreeNode, cards = false): TreeDestination | null {
   if (cards) {
-    if (node.kind === 'file') return { root: node.root!, path: [] };
+    if (node.kind === 'file' || node.kind === 'root' && node.root) return { root: node.root!, path: [] };
     if (node.kind === 'card' && node.nested) return { root: node.root!, path: [...(node.path ?? []), node.card!] };
     return null;
   }
@@ -39,10 +39,14 @@ export function variableDrop(dt: DataTransfer, project: Project): string | null 
 }
 export function jumpDrop(dt: DataTransfer, project: Project): string | null {
   const items = draggedItems(dt, project); const item = items?.length === 1 ? items[0] : null;
-  if (item?.kind === 'file') return project.canvases[item.id]?.id ?? null;
+  if (item?.kind === 'file') return canvasLocations(project).find(({ canvas }) => canvas.id === item.id)?.canvas.id ?? null;
   if (item?.kind === 'card') {
     const root = project.canvases[item.root];
-    if (root && flowCards(root).some(({ card }) => card.id === item.id)) return `${root.id}.${item.id}`;
+    const found = root && flowCards(root).find(({ card }) => card.id === item.id);
+    if (found) {
+      const flow = found.card.flow;
+      return flow && flow.legacyId === flow.id ? flow.id : `${found.canvas.legacyId ?? found.canvas.id}.${item.id}`;
+    }
   }
   return null;
 }

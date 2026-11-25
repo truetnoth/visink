@@ -7,19 +7,63 @@ import { migrateFolders } from "./folders";
 const CANVAS_SUFFIX = ".canvas.json";
 
 export function createProject(name: string): Project {
+  const main = createCanvas("main", name);
+  ensureCanvasBoundaries(main);
   return {
-    settings: { name, buildDir: "build/narrative", languages: ["ru"] },
+    settings: { name, buildDir: "build/narrative", languages: ["ru"], start: "main", formatVersion: 4 },
     entities: [
       { id: "ent_player", kind: "character", name: "Игрок", inkName: "ИГРОК", color: "#3b82f6", isPlayer: true },
       { id: "ent_narrator", kind: "character", name: "Рассказчик", inkName: "", color: "#6b7280" },
     ],
     variables: { vars: [], lists: [], functions: [] },
-    canvases: {},
+    canvases: { main },
   };
 }
 
 export function createCanvas(id: string, title: string): Canvas {
   return { id, title, entries: [], cards: [], links: [], layout: {}, groups: [], notes: [], graveyard: [] };
+}
+
+function unusedCardId(canvas: Canvas, base: string): string {
+  const used = new Set([...canvas.cards.map((c) => c.id), ...canvas.graveyard]);
+  if (!used.has(base)) return base;
+  for (let n = 2; ; n++) if (!used.has(`${base}_${n}`)) return `${base}_${n}`;
+}
+
+export function isBoundaryCard(card: Card): boolean {
+  return card.type === "entry" || card.type === "exit";
+}
+
+/** Добавляет неизменяемые границы холста и переводит прежние свободные концы на «Выход». */
+export function ensureCanvasBoundaries(canvas: Canvas): Canvas {
+  if (canvas.cards.some((c) => c.type === "entry") && canvas.cards.some((c) => c.type === "exit")) return canvas;
+  const ordinary = canvas.cards.filter((c) => !isBoundaryCard(c));
+  const previousStart = ordinary.find((c) => c.id === canvas.start) ?? guessStart({ ...canvas, cards: ordinary });
+  let entry = canvas.cards.find((c) => c.type === "entry");
+  if (!entry) {
+    entry = { id: unusedCardId(canvas, "__entry"), type: "entry" };
+    canvas.cards.unshift(entry);
+  }
+  let exit = canvas.cards.find((c) => c.type === "exit");
+  if (!exit) {
+    exit = { id: unusedCardId(canvas, "__exit"), type: "exit" };
+    canvas.cards.push(exit);
+  }
+  canvas.links = canvas.links.filter((l) => l.from !== exit.id && l.to !== entry.id);
+  if (!canvas.links.some((l) => l.from === entry.id)) {
+    canvas.links.push({ from: entry.id, to: previousStart?.id ?? exit.id, order: 0, kind: "divert", ...(previousStart ? { direct: true } : {}) });
+  }
+  for (const card of ordinary) {
+    if (card.type === "jump" || canvas.links.some((l) => l.from === card.id)) continue;
+    canvas.links.push({ from: card.id, to: exit.id, order: 0, kind: "divert" });
+  }
+  const positions = ordinary.map((c) => canvas.layout[c.id]).filter(Boolean);
+  const minX = Math.min(0, ...positions.map((p) => p.x));
+  const maxX = Math.max(0, ...positions.map((p) => p.x + (p.w ?? 280)));
+  const y = previousStart ? canvas.layout[previousStart.id]?.y ?? 0 : 0;
+  canvas.layout[entry.id] ??= { x: minX - 220, y };
+  canvas.layout[exit.id] ??= { x: maxX + 220, y };
+  return canvas;
 }
 
 /** Путь файла холста без расширения: холсты лежат плоско, имя файла = id. */
@@ -37,7 +81,7 @@ export function createCard(id: string, type: CardType, init: Partial<Card> = {})
   if (type === "ink") card.text ??= "";
   if (type === "flow") {
     card.text ??= "Новая вложенность";
-    card.flow ??= createCanvas(`flow_${id}`, card.text);
+    card.flow ??= ensureCanvasBoundaries(createCanvas(`flow_${id}`, card.text));
   }
   return card;
 }
@@ -159,6 +203,90 @@ export function canvasAtPath(root: Canvas, path: FlowPath = []): Canvas | undefi
   return canvas;
 }
 
+export interface CanvasLocation {
+  canvas: Canvas;
+  path: FlowPath;
+  parent?: { canvas: Canvas; card: Card };
+}
+
+/** Все самостоятельные knot’ы проекта вместе с их единственным владельцем. */
+export function canvasLocations(project: Project): CanvasLocation[] {
+  const out: CanvasLocation[] = [];
+  const roots = Object.values(project.canvases);
+  const visit = (canvas: Canvas, parent?: CanvasLocation["parent"], path: FlowPath = []) => {
+    out.push({ canvas, path, ...(parent ? { parent } : {}) });
+    for (const card of canvas.cards) if (card.flow) visit(card.flow, { canvas, card }, [...path, card.id]);
+  };
+  for (const root of roots) visit(root);
+  return out;
+}
+
+function markLegacyAddresses(root: Canvas) {
+  const visit = (canvas: Canvas) => {
+    canvas.legacyId ??= root.id;
+    for (const card of canvas.cards) if (card.flow) visit(card.flow);
+  };
+  visit(root);
+}
+
+/** Переводит прежние независимые файлы в карточки главного холста main. */
+export function prepareProject(project: Project): Project {
+  const existing = Object.values(project.canvases);
+  let main = existing.find((c) => c.id === "main");
+  const roots = existing.filter((c) => c !== main);
+  const missingBoundaries = (canvas: Canvas): boolean =>
+    !canvas.cards.some((c) => c.type === "entry") || !canvas.cards.some((c) => c.type === "exit") || canvas.cards.some((c) => !!c.flow && missingBoundaries(c.flow));
+  const migrating = (project.settings.formatVersion ?? 1) < 4 || !main || roots.length > 0 || existing.some(missingBoundaries);
+  const legacyMain = (project.settings.formatVersion ?? 1) < 4 && !!main;
+  if (!main) {
+    main = createCanvas("main", project.settings.name);
+    ensureCanvasBoundaries(main);
+  }
+  main.title = project.settings.name;
+  project.canvases = { main };
+  if (migrating) ensureCanvasBoundaries(main);
+  if (legacyMain) markLegacyAddresses(main);
+  if (roots.length) {
+    const used = new Set(main.cards.map((c) => c.id));
+    roots.forEach((canvas, i) => {
+      markLegacyAddresses(canvas);
+      let id = `file_${canvas.id}`;
+      for (let n = 2; used.has(id); n++) id = `file_${canvas.id}_${n}`;
+      used.add(id);
+      const wrapper = createCard(id, "flow", { text: canvas.title, folderId: canvas.folderId });
+      wrapper.flow = canvas;
+      main!.cards.push(wrapper);
+      main!.layout[id] = { x: 0, y: i * 180 };
+    });
+  }
+  if (migrating && existing.length && project.settings.start && project.settings.start !== "main") {
+    const entry = main.cards.find((c) => c.type === "entry")!;
+    const route = createCard(unusedCardId(main, "__main_start"), "jump", { target: project.settings.start });
+    main.cards.push(route);
+    main.layout[route.id] = { x: -220, y: -180 };
+    main.links = main.links.filter((l) => l.from !== entry.id);
+    main.links.push({ from: entry.id, to: route.id, order: 0, kind: "divert" });
+  }
+  if (migrating) {
+    const visit = (canvas: Canvas) => {
+      ensureCanvasBoundaries(canvas);
+      for (const card of canvas.cards) if (card.flow) visit(card.flow);
+    };
+    visit(main);
+    const reserved = new Set([main, ...roots]);
+    const usedIds = new Set(["globals", ...[...reserved].map((c) => c.id.toLowerCase())]);
+    for (const location of canvasLocations(project)) {
+      const canvas = location.canvas;
+      if (reserved.has(canvas)) continue;
+      const base = canvas.id;
+      for (let n = 2; usedIds.has(canvas.id.toLowerCase()); n++) canvas.id = `${base}_${n}`;
+      usedIds.add(canvas.id.toLowerCase());
+    }
+    project.settings.formatVersion = 4;
+  }
+  return project;
+}
+
 export interface FlowCard {
   canvas: Canvas;
   card: Card;
@@ -178,17 +306,17 @@ export function flowCards(root: Canvas): FlowCard[] {
   return out;
 }
 
-function normalizeCanvas(raw: Partial<Canvas> & { cards?: LegacyCard[] }): Canvas {
+function normalizeCanvas(raw: Partial<Canvas> & { cards?: LegacyCard[] }, modern = false): Canvas {
   const graveyard = [...(raw.graveyard ?? [])];
   const migrated = migrateCards(raw.cards ?? [], raw.links ?? [], graveyard);
-  const cards = migrated.cards.map((card) => card.flow ? { ...card, flow: normalizeCanvas(card.flow) } : card);
+  const cards = migrated.cards.map((card) => card.flow ? { ...card, flow: normalizeCanvas(card.flow, modern) } : card);
   const links = migrated.links;
   const layout = Object.fromEntries(Object.entries(raw.layout ?? {}).filter(([id]) => cards.some((c) => c.id === id)));
-  // проекты до явного начала файла: начало — то, с чего файл и так начинался
-  const start = raw.start && cards.some((c) => c.id === raw.start) ? raw.start : guessStart({ cards, links, layout })?.id;
+  const start = raw.start && cards.some((c) => c.id === raw.start) ? raw.start : modern ? undefined : guessStart({ cards, links, layout })?.id;
   return {
     id: raw.id ?? "canvas",
     title: raw.title ?? raw.id ?? "",
+    ...(raw.legacyId ? { legacyId: raw.legacyId } : {}),
     ...(raw.folderId ? { folderId: raw.folderId } : {}),
     ...(raw.group ? { group: raw.group } : {}),
     ...(start ? { start } : {}),
@@ -213,13 +341,17 @@ export async function loadProject(fs: ProjectFs): Promise<Project> {
   const settingsText = await fs.readText("project.json");
   if (settingsText == null) throw new Error("В папке нет project.json — это не проект Visink");
   const settings = JSON.parse(settingsText);
-  if ((settings.formatVersion ?? 1) > 3) throw new Error("Проект создан более новой версией VisInk");
+  if ((settings.formatVersion ?? 1) > 4) throw new Error("Проект создан более новой версией VisInk");
   const entities: Entity[] = JSON.parse((await fs.readText("entities.json")) ?? "[]");
   const variables: Variables = JSON.parse((await fs.readText("variables.json")) ?? '{"vars":[],"lists":[]}');
   const canvases: Record<string, Canvas> = {};
-  for (const file of await fs.listFiles("canvases")) {
-    if (!file.endsWith(CANVAS_SUFFIX)) continue;
-    const canvas = migrateFlowLogic(normalizeCanvas(JSON.parse((await fs.readText(file)) ?? "{}")), { entities });
+  const canvasFiles = (await fs.listFiles("canvases")).filter((file) => file.endsWith(CANVAS_SUFFIX));
+  const currentFiles = (settings.formatVersion ?? 1) >= 4 && canvasFiles.includes(`canvases/main${CANVAS_SUFFIX}`)
+    ? [`canvases/main${CANVAS_SUFFIX}`]
+    : canvasFiles;
+  for (const file of currentFiles) {
+    const normalized = normalizeCanvas(JSON.parse((await fs.readText(file)) ?? "{}"), (settings.formatVersion ?? 1) >= 4);
+    const canvas = (settings.formatVersion ?? 1) >= 4 ? normalized : migrateFlowLogic(normalized, { entities });
     canvases[canvasPath(canvas)] = canvas;
   }
   const project: Project = {
@@ -229,19 +361,25 @@ export async function loadProject(fs: ProjectFs): Promise<Project> {
     canvases,
   };
   migrateFolders(project);
-  return project;
+  return prepareProject(project);
 }
 
 /** Файлы проекта в виде «путь → содержимое». */
 export function serializeProject(project: Project): Map<string, string> {
   project = structuredClone(project);
   migrateFolders(project);
+  prepareProject(project);
   const files = new Map<string, string>();
-  files.set("project.json", stableStringify({ ...project.settings, formatVersion: 3 }));
+  files.set("project.json", stableStringify({ ...project.settings, formatVersion: 4 }));
   files.set("entities.json", stableStringify(project.entities.map((e) => ({ ...e, technicalName: e.technicalName ?? e.id }))));
   files.set("variables.json", stableStringify({ ...project.variables, sets: project.variables.sets ?? [] }));
   for (const canvas of Object.values(project.canvases)) {
-    files.set(`canvases/${canvasPath(canvas)}${CANVAS_SUFFIX}`, stableStringify(syncEntries(canvas)));
+    const sync = (c: Canvas) => {
+      c.entries = syncEntries(c).entries;
+      for (const card of c.cards) if (card.flow) sync(card.flow);
+    };
+    sync(canvas);
+    files.set(`canvases/${canvasPath(canvas)}${CANVAS_SUFFIX}`, stableStringify(canvas));
   }
   return files;
 }
@@ -252,9 +390,9 @@ export function serializeProject(project: Project): Map<string, string> {
  */
 export async function saveProject(fs: ProjectFs, project: Project): Promise<string[]> {
   const original = await fs.readText("project.json");
-  if (original && (JSON.parse(original).formatVersion ?? 1) < 3) {
+  if (original && (JSON.parse(original).formatVersion ?? 1) < 4) {
     const oldVersion = JSON.parse(original).formatVersion ?? 1;
-    const backup = oldVersion < 2 ? ".backups/pre-v2/" : ".backups/pre-v3/";
+    const backup = oldVersion < 2 ? ".backups/pre-v2/" : oldVersion < 3 ? ".backups/pre-v3/" : ".backups/pre-v4/";
     if (!(await fs.readText(backup + "complete.json"))) {
       const paths = ["project.json", "entities.json", "variables.json", ...(await fs.listFiles("canvases"))];
       for (const path of paths) {

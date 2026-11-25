@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { canvasAtPath, isPlayerCard, type Card } from '@visink/core';
 import { editAtomic, useStore } from '../store';
@@ -16,6 +16,7 @@ export function CardControl({ card, anchor }: { card: Card; anchor: HTMLElement 
   const [error, setError] = useState('');
   const [position, setPosition] = useState({ left: 8, top: 8 });
   const ref = useRef<HTMLDivElement>(null);
+  const targets = useMemo(() => request?.field === 'target' ? jumpTargets(project) : [], [request?.field, project]);
   const close = () => { useStore.setState({ cardControl: null }); anchor.focus({ preventScroll: true }); };
   useLayoutEffect(() => {
     const r = anchor.getBoundingClientRect();
@@ -52,14 +53,14 @@ export function CardControl({ card, anchor }: { card: Card; anchor: HTMLElement 
       close();
     } catch (e) { setError((e as Error).message); }
   };
-  const options = field === 'repeat' ? [...REPEAT_OPTIONS] : field === 'target' ? [{ value: '', label: 'Цель не задана' }, ...jumpTargets(project)] : [];
-  const filtered = options.filter((o) => o.label.toLocaleLowerCase().includes(query.toLocaleLowerCase()));
+  const options: { value: string; label: string; aliases?: string[] }[] = field === 'repeat' ? REPEAT_OPTIONS.map((option) => ({ ...option })) : field === 'target' ? [{ value: '', label: 'Цель не задана' }, ...targets] : [];
+  const filtered = options.filter((o) => [o.label, o.value, ...(o.aliases ?? [])].join(' ').toLocaleLowerCase().includes(query.toLocaleLowerCase()));
   return createPortal(<div ref={ref} className="popup card-control-popup nodrag nopan nowheel" role="dialog" aria-label={titles[field]} style={position} onMouseDown={(e) => e.stopPropagation()} onDoubleClick={(e) => e.stopPropagation()} onKeyDown={(e) => { e.stopPropagation(); if (e.key === 'Escape') { e.preventDefault(); close(); } }}>
     <div className="card-control-title"><strong>{titles[field]}</strong><button aria-label="Закрыть" onClick={close}>×</button></div>
     {count > 1 && field === 'repeat' && <div className="muted">Для подходящих реплик в выделении ({count})</div>}
     {field === 'entry' ? <form onSubmit={(e) => { e.preventDefault(); apply(entry); }}><input aria-label="Имя точки входа" value={entry} spellCheck={false} onChange={(e) => setEntry(e.target.value)} placeholder="second_meeting" /><div className="row"><button type="button" onClick={close}>Отмена</button><button className="primary" type="submit">Сохранить</button></div></form> : <>
-      {field !== 'repeat' && <input aria-label="Поиск" placeholder="Поиск…" value={query} onChange={(e) => setQuery(e.target.value)} />}
-      <div className="card-control-options">{filtered.map((o) => <button key={o.value} className={card[field] === o.value ? 'on' : ''} onClick={() => apply(o.value)}>{o.label}</button>)}{!filtered.length && <div className="muted">Ничего не найдено</div>}</div>
+      {field !== 'repeat' && <input aria-label="Поиск" placeholder="Поиск…" value={query} spellCheck={false} autoCapitalize="off" autoCorrect="off" onChange={(e) => setQuery(e.target.value)} />}
+      <div className="card-control-options">{filtered.map((o) => <button key={o.value} className={card[field] === o.value || field === 'target' && o.aliases?.includes(card.target ?? '') ? 'on' : ''} onClick={() => apply(o.value)}>{o.label}</button>)}{!filtered.length && <div className="muted">Ничего не найдено</div>}</div>
     </>}
     {error && <div className="bad" role="alert">{error}</div>}
   </div>, document.body);

@@ -1,7 +1,7 @@
 // свойства переменных, списков и функций: формы редактирования и «где используется»
 import { useMemo, useState } from "react";
 import type { InkFunction, InkListDef, Project, Variable as VarDef, VarType } from "@visink/core";
-import { isValidInkName } from "@visink/core";
+import { canvasLocations, isValidInkName } from "@visink/core";
 import { useStore } from "../store";
 import { askUser } from "../tauriFs";
 import { renameVariable, variableUsages } from "../ops";
@@ -49,7 +49,7 @@ function UsageList({ usages, project }: { usages: Usage[]; project: Project }) {
             </li>
           );
         }
-        const c = project.canvases[u.key];
+        const c = canvasLocations(project).find(({ canvas }) => canvas.id === u.key || canvas.legacyId === u.key)?.canvas;
         const card = u.card ? c?.cards.find((x) => x.id === u.card) : undefined;
         return (
           <li key={i} onClick={() => (u.link ? focusLink(u.key, u.link) : focusCard(u.key, u.card))}>

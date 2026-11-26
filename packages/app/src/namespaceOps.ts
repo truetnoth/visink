@@ -1,6 +1,6 @@
 import type { Canvas, Project } from "@visink/core";
 import { namespaceError, namespaceName, qualifiedName } from "@visink/core";
-import { mapStoryText } from "@visink/compiler";
+import { rewriteCardExpression } from "./cardEditing";
 import { mentions, replaceIdent } from "./ops";
 
 /** Только поля с Ink-логикой, включая все вложенные потоки. */
@@ -8,18 +8,23 @@ function mapExpressions(project: Project, transform: (text: string, owner?: stri
   for (const f of project.variables.functions) f.body = transform(f.body, f.owner, f.params);
   const visit = (canvas: Canvas) => {
     for (const c of canvas.cards) {
-      if (c.condition) c.condition = transform(c.condition);
-      if (c.action) c.action = transform(c.action);
+      const locals = c.inputs?.map((input) => input.name);
+      const rewrite = (text: string) => transform(text, undefined, locals);
+      if (c.condition) c.condition = rewrite(c.condition);
+      if (c.action) c.action = rewrite(c.action);
       if (c.type === "line") {
-        if (c.text) c.text = mapStoryText(project, c.text, transform);
-        if (c.menuText) c.menuText = mapStoryText(project, c.menuText, transform);
+        rewriteCardExpression(project, c, "text", rewrite);
+        rewriteCardExpression(project, c, "menuText", rewrite);
       }
-      if (c.type === "ink" && c.text) c.text = transform(c.text);
+      if (c.type === "ink" && c.text) c.text = rewrite(c.text);
       if (c.flow) visit(c.flow);
     }
     for (const l of canvas.links) {
-      if (l.condition) l.condition = transform(l.condition);
-      if (l.action) l.action = transform(l.action);
+      const locals = canvas.cards.find((card) => card.id === l.from && card.type !== "flow")?.inputs?.map((input) => input.name);
+      const rewrite = (text: string) => transform(text, undefined, locals);
+      if (l.condition) l.condition = rewrite(l.condition);
+      if (l.action) l.action = rewrite(l.action);
+      for (const [key, value] of Object.entries(l.args ?? {})) l.args![key] = rewrite(value);
     }
   };
   Object.values(project.canvases).forEach(visit);

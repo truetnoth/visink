@@ -1,11 +1,11 @@
 // общие константы и типы для холста: подписи/иконки/цвета типов карточек, компактность, хелперы
 import type { LucideIcon } from "lucide-react";
 import { ArrowRightFromLine, Code, GitBranch, Layers, LogIn, LogOut, MessageSquare, Repeat } from "lucide-react";
-import type { Card, CardType, Entity } from "@visink/core";
+import type { Card, CardType, Entity, TextSpan } from "@visink/core";
 
 export type PinPoint = { x: number; y: number };
 export type CardData = { card: Card; targetLabel?: string; speaker?: Entity; player: boolean; fixedHeight: boolean; problem?: "error" | "warning"; problemText?: string; problemCount?: number; onPin: (id: string, field: "condition" | "action", point: PinPoint) => void; onBranch: (id: string, port: "yes" | "no" | undefined, point: PinPoint) => void; onNavigate: (target?: string) => boolean };
-export type NoteData = { id: string; text: string; color?: string };
+export type NoteData = { id: string; text: string; color?: string; formatting?: TextSpan[] };
 export type EdgeData = { condition?: string; action?: string; error?: boolean; draft?: boolean };
 export type DraftLink = { id: string; from: string; port?: "yes" | "no"; x: number; y: number };
 

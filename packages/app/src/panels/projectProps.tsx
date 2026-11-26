@@ -1,13 +1,33 @@
 import { NamespaceField } from "../NamespaceField";
 // свойства файла (Canvas), проекта и персонажей (Entity)
-import { useRef, useState } from "react";
-import type { Canvas, Entity, Project } from "@visink/core";
-import { canvasAtPath, canvasLocations, flowCards, isValidInkName } from "@visink/core";
+import { useState } from "react";
+import type { Canvas, Entity, Project, TextSpan } from "@visink/core";
+import { canvasAtPath, canvasLocations, flowCards, isValidInkName, rebaseSpans, withTextSpans } from "@visink/core";
+import { RichTextEditor } from "../richText";
 import { editAtomic, useStore } from "../store";
 import { deleteEntity } from "../organization";
 import { askUser } from "../tauriFs";
 import { deleteCards, renameNestedCanvas } from "../ops";
 import { characterOptions, Field, PortraitPreview, Select, Text } from "./fields";
+
+function writeCanvasTitle(project: Project, canvasKey: string, flowPath: string[], value: string, spans: TextSpan[]) {
+  const current = canvasAtPath(project.canvases[canvasKey], flowPath);
+  if (!current) return;
+  current.title = value;
+  current.formatting = withTextSpans(current.formatting, "title", spans);
+  if (current.id === "main" && flowPath.length === 0) {
+    project.settings.name = value;
+    project.settings.formatting = withTextSpans(project.settings.formatting, "name", spans);
+  }
+  if (flowPath.length) {
+    const parent = canvasAtPath(project.canvases[canvasKey], flowPath.slice(0, -1));
+    const owner = parent?.cards.find((card) => card.id === flowPath.at(-1));
+    if (owner?.type === "flow") {
+      owner.text = value;
+      owner.formatting = withTextSpans(owner.formatting, "text", spans);
+    }
+  }
+}
 
 export function CanvasProps({ canvas, canvasKey, project }: { canvas: Canvas; canvasKey: string; project: Project }) {
   const { edit, setActiveCanvas } = useStore.getState();
@@ -30,17 +50,7 @@ export function CanvasProps({ canvas, canvasKey, project }: { canvas: Canvas; ca
     <div className="props">
       <div className="props-title">Файл</div>
       <Field label="Название">
-        <Text value={canvas.title} onChange={(v) => edit((p) => {
-          const current = canvasAtPath(p.canvases[canvasKey], flowPath);
-          if (!current) return;
-          current.title = v;
-          if (!nested && current.id === "main") p.settings.name = v;
-          if (nested) {
-            const parent = canvasAtPath(p.canvases[canvasKey], flowPath.slice(0, -1));
-            const owner = parent?.cards.find((card) => card.id === flowPath.at(-1));
-            if (owner?.type === "flow") owner.text = v;
-          }
-        })} />
+        <Text value={canvas.title} spans={canvas.formatting?.title} project={project} onChange={(v, spans = []) => edit((p) => writeCanvasTitle(p, canvasKey, flowPath, v, spans))} onFormat={(v, spans) => editAtomic((p) => writeCanvasTitle(p, canvasKey, flowPath, v, spans))} />
       </Field>
       <Field
         label="Имя файла и узла ink"
@@ -82,9 +92,20 @@ export function ProjectProps({ project }: { project: Project }) {
     <div className="props">
       <div className="props-title">Проект</div>
       <Field label="Название">
-        <Text value={project.settings.name} onChange={(v) => edit((p) => {
+        <Text value={project.settings.name} spans={project.settings.formatting?.name} project={project} onChange={(v, spans = []) => edit((p) => {
           p.settings.name = v;
-          if (p.canvases.main) p.canvases.main.title = v;
+          p.settings.formatting = withTextSpans(p.settings.formatting, "name", spans);
+          if (p.canvases.main) {
+            p.canvases.main.title = v;
+            p.canvases.main.formatting = withTextSpans(p.canvases.main.formatting, "title", spans);
+          }
+        })} onFormat={(v, spans) => editAtomic((p) => {
+          p.settings.name = v;
+          p.settings.formatting = withTextSpans(p.settings.formatting, "name", spans);
+          if (p.canvases.main) {
+            p.canvases.main.title = v;
+            p.canvases.main.formatting = withTextSpans(p.canvases.main.formatting, "title", spans);
+          }
         })} />
       </Field>
       <Field label="Папка сборки внутри проекта" hint={buildFs ? `сейчас сборка пишется во внешнюю папку «${buildFs.name}»` : undefined}>
@@ -107,19 +128,37 @@ export function EntityProps({ entity, project }: { entity: Entity; project: Proj
   const uses = Object.values(project.canvases).reduce((n, c) => n + flowCards(c).filter((x) => x.card.speaker === entity.id).length, 0);
   const owned = [...project.variables.vars, ...project.variables.lists, ...project.variables.functions].some((v) => v.owner === entity.id);
   const [deleteError, setDeleteError] = useState("");
-  const [naming, setNaming] = useState(false);
-  const [name, setName] = useState(entity.name);
-  const cancelled = useRef(false);
-  const startName = () => { cancelled.current = false; setName(entity.name); setNaming(true); };
-  const commitName = () => { if (!cancelled.current && name.trim()) set("name", name.trim()); setNaming(false); };
+  const writeName = (value: string, spans: TextSpan[]) => {
+    const name = value.trim();
+    if (!name) return;
+    edit((p) => {
+      const target = p.entities.find((item) => item.id === entity.id);
+      if (target) {
+        target.name = name;
+        target.formatting = withTextSpans(target.formatting, "name", rebaseSpans(spans, value, name));
+      }
+    });
+  };
   return (
     <div className="props entity-props">
-      {naming ? <input className="entity-title-input" aria-label="Имя сущности" autoFocus value={name} onChange={(e) => setName(e.target.value)} onBlur={commitName} onKeyDown={(e) => { if (e.key === "Enter") commitName(); if (e.key === "Escape") { cancelled.current = true; setNaming(false); } }} /> : <h2 className="entity-title" tabIndex={0} title="Двойной щелчок — переименовать" onDoubleClick={startName} onKeyDown={(e) => { if (e.key === "Enter" || e.key === "F2") startName(); }}>{entity.name}</h2>}
-      <div className="entity-intro"><PortraitPreview entity={entity} /><textarea aria-label="Описание сущности" placeholder="Описание" rows={3} value={entity.description ?? ""} onChange={(e) => set("description", e.target.value || undefined)} /></div>
+      <div className="entity-title"><RichTextEditor text={entity.name} spans={entity.formatting?.name} onSave={writeName} onFormat={(value, spans) => editAtomic((p) => {
+        const target = p.entities.find((item) => item.id === entity.id);
+        if (target && value.trim()) {
+          target.name = value.trim();
+          target.formatting = withTextSpans(target.formatting, "name", rebaseSpans(spans, value, target.name));
+        }
+      })} project={project} className="entity-title-rich" mode="doubleClick" localToolbar /></div>
+      <div className="entity-intro"><PortraitPreview entity={entity} /><textarea aria-label="Описание сущности" placeholder="Описание" rows={3} value={entity.description ?? ""} onChange={(e) => edit((p) => {
+        const target = p.entities.find((item) => item.id === entity.id);
+        if (target) {
+          target.description = e.target.value || undefined;
+          target.formatting = withTextSpans(target.formatting, "description", []);
+        }
+      })} /></div>
       <div className="entity-fields">
         <NamespaceField key={entity.id} project={project} id={entity.id} />
-        <Field label="Имя в ink"><Text value={entity.inkName} onChange={(v) => set("inkName", v)} /></Field>
-        <Field label="Портрет"><Text value={entity.portrait ?? ""} placeholder="assets/portraits/dean.png" onChange={(v) => set("portrait", v || undefined)} /></Field>
+        <Field label="Имя в ink"><Text mono value={entity.inkName} onChange={(v) => set("inkName", v)} /></Field>
+        <Field label="Портрет"><Text mono value={entity.portrait ?? ""} placeholder="assets/portraits/dean.png" onChange={(v) => set("portrait", v || undefined)} /></Field>
         <Field label="Цвет"><input type="color" value={entity.color} onChange={(e) => set("color", e.target.value)} /></Field>
       </div>
       <label className="check">

@@ -6,7 +6,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Play, Plus, RotateCcw, StepForward, Trash2 } from "lucide-react";
 import { Story } from "inkjs";
 import type { Entity, InkFunction, InkListDef, Project, Variable, VarType } from "@visink/core";
-import { flowCards, isValidInkName, canvasLocations } from "@visink/core";
+import { flowCards, isValidInkName, canvasLocations, withTextSpans } from "@visink/core";
 import { resolveTarget, scopedInkName } from "@visink/compiler";
 import { unknownIdentifiers } from "@visink/checker";
 import { EntityProps } from "./Panels";
@@ -101,7 +101,7 @@ function VariablesTable({ project, owner }: { project: Project; owner?: string }
                   catch (e) { setError((e as Error).message); }
                 }} />}</td>
                 <td><LogicName item={v} kind="var" owner={v.owner} /></td>
-                <td><input value={v.description ?? ""} placeholder="Введите описание" onChange={(e) => edit((p) => { const x = p.variables.vars.find((y) => y.name === v.name && y.owner === v.owner); if (x) x.description = e.target.value || undefined; })} /></td>
+                <td><input value={v.description ?? ""} placeholder="Введите описание" onChange={(e) => edit((p) => { const x = p.variables.vars.find((y) => y.name === v.name && y.owner === v.owner); if (x) { x.description = e.target.value || undefined; x.formatting = withTextSpans(x.formatting, "description", []); } })} /></td>
                 <td><Select value={v.type} options={VAR_TYPES.map(([value, label]) => ({ value, label }))} onChange={(type) => edit((p) => { const x = p.variables.vars.find((y) => y.name === v.name && y.owner === v.owner); if (x) { x.type = type; x.default = defaultFor(type); } })} /></td>
                 <td><DefaultValue item={v} onChange={(value) => edit((p) => { const x = p.variables.vars.find((y) => y.name === v.name && y.owner === v.owner); if (x) x.default = value; })} /></td>
                 <td><button className="row-delete" title="Удалить" onClick={() => remove([v])}><Trash2 size={14} /></button></td>
@@ -136,7 +136,7 @@ function ListsEditor({ project, owner }: { project: Project; owner?: string }) {
       {lists.length > 0 && <div className="logic-cards">
         {lists.map((l) => <div className="logic-card" data-logic-kind="list" data-logic-name={l.name} key={logicalName(l)}>
           <div className="logic-card-head"><input type="checkbox" aria-label={`Выбрать ${logicalName(l)}`} checked={checked.has(logicalName(l))} onChange={(e) => setChecked((old) => { const next = new Set(old); if (e.target.checked) next.add(logicalName(l)); else next.delete(logicalName(l)); return next; })} /><LogicName item={l} kind="list" owner={l.owner} /><button className="row-delete" title="Удалить" onClick={() => remove([l])}><Trash2 size={14} /></button></div>
-          <input value={l.description ?? ""} placeholder="Описание" onChange={(e) => update(l, (x) => { x.description = e.target.value || undefined; })} />
+          <input value={l.description ?? ""} placeholder="Описание" onChange={(e) => edit((p) => { const x = p.variables.lists.find((item) => item.name === l.name && item.owner === l.owner); if (x) { x.description = e.target.value || undefined; x.formatting = withTextSpans(x.formatting, "description", []); } })} />
           <label className="field"><span className="field-label">Элементы через запятую</span><input className="mono" spellCheck={false} autoCapitalize="off" autoCorrect="off" defaultValue={l.items.join(", ")} onBlur={(e) => update(l, (x) => { x.items = e.target.value.split(",").map((v) => v.trim()).filter((v) => isValidInkName(v)); x.initial = x.initial.filter((v) => x.items.includes(v)); })} /></label>
           <div className="checks">{l.items.map((item) => <label className="check mono" key={item}><input type="checkbox" checked={l.initial.includes(item)} onChange={(e) => update(l, (x) => { x.initial = e.target.checked ? [...x.initial, item] : x.initial.filter((v) => v !== item); })} />{item}</label>)}</div>
         </div>)}
@@ -167,7 +167,7 @@ function FunctionsEditor({ project, owner }: { project: Project; owner?: string 
           const unknown = unknownIdentifiers(f.body, project, f.params, f.owner);
           return <div className="logic-card" data-logic-kind="func" data-logic-name={f.name} key={logicalName(f)}>
             <div className="logic-card-head"><input type="checkbox" aria-label={`Выбрать ${logicalName(f)}`} checked={checked.has(logicalName(f))} onChange={(e) => setChecked((old) => { const next = new Set(old); if (e.target.checked) next.add(logicalName(f)); else next.delete(logicalName(f)); return next; })} /><LogicName item={f} kind="func" owner={f.owner} /><button className="row-delete" title="Удалить" onClick={() => remove([f])}><Trash2 size={14} /></button></div>
-            <div className="row2"><input className="mono" spellCheck={false} autoCapitalize="off" autoCorrect="off" defaultValue={f.params.join(", ")} placeholder="Параметры: who, amount" onBlur={(e) => update(f, (x) => { x.params = e.target.value.split(",").map((v) => v.trim()).filter((v) => isValidInkName(v)); })} /><input value={f.description ?? ""} placeholder="Описание" onChange={(e) => update(f, (x) => { x.description = e.target.value || undefined; })} /></div>
+            <div className="row2"><input className="mono" spellCheck={false} autoCapitalize="off" autoCorrect="off" defaultValue={f.params.join(", ")} placeholder="Параметры: who, amount" onBlur={(e) => update(f, (x) => { x.params = e.target.value.split(",").map((v) => v.trim()).filter((v) => isValidInkName(v)); })} /><input value={f.description ?? ""} placeholder="Описание" onChange={(e) => edit((p) => { const x = p.variables.functions.find((item) => item.name === f.name && item.owner === f.owner); if (x) { x.description = e.target.value || undefined; x.formatting = withTextSpans(x.formatting, "description", []); } })} /></div>
             <label className="check"><input type="checkbox" checked={!!f.external} onChange={(e) => update(f, (x) => { x.external = e.target.checked || undefined; })} />Реализует игра (EXTERNAL); здесь используется запасное тело</label>
             <CodeInput value={f.body} onChange={(body) => update(f, (x) => { x.body = body; })} project={project} extra={f.params} owner={f.owner} multiline rows={5} />
             {unknown.length > 0 && <div className="bad">Неизвестно: {unknown.join(", ")}</div>}
@@ -201,7 +201,7 @@ export function LogicScreen() {
     }}><Plus size={14} /> Набор</button></div>
 
     {set && <div className="props pad"><NamespaceField key={set.id} project={project} id={set.id} />
-      <label className="field"><span className="field-label">Описание набора</span><input value={set.description ?? ""} onChange={(e) => useStore.getState().edit((p) => { p.variables.sets!.find((s) => s.id === set.id)!.description = e.target.value; })} /></label>
+      <label className="field"><span className="field-label">Описание набора</span><input value={set.description ?? ""} onChange={(e) => useStore.getState().edit((p) => { const target = p.variables.sets!.find((s) => s.id === set.id)!; target.description = e.target.value; target.formatting = withTextSpans(target.formatting, "description", []); })} /></label>
       <button onClick={() => { editAtomic((p) => deleteVariableSet(p, set.id)); useStore.getState().selectLogicScope(null); }}>Удалить набор</button>
     </div>}
     <LogicWorkspace key={set?.id ?? "globals"} owner={set?.id} />

@@ -20,6 +20,7 @@ export function LinkProps({ link, canvas, canvasKey, project }: { link: Link; ca
     });
   const from = canvas.cards.find((c) => c.id === link.from);
   const to = canvas.cards.find((c) => c.id === link.to);
+  const localNames = from?.type === "flow" ? undefined : from?.inputs?.map((input) => input.name);
   const label = (c?: Card) => (c ? c.menuText || c.text || TYPE_LABEL[c.type] : "?");
   const toPlayer = !!to && isPlayerCard(project, to);
   const problems = (check?.diagnostics ?? []).filter((d) => d.canvas === canvasKey && d.link && same(d.link as Link));
@@ -43,11 +44,20 @@ export function LinkProps({ link, canvas, canvasKey, project }: { link: Link; ca
           value={link.condition}
           onChange={(v) => set("condition", v)}
           project={project}
+          extra={localNames}
         />
       )}
       {link.action && (
-        <ExprField label="Действие при переходе (~ …), по строке" value={link.action} onChange={(v) => set("action", v)} project={project} multiline />
+        <ExprField label="Действие при переходе (~ …), по строке" value={link.action} onChange={(v) => set("action", v)} project={project} extra={localNames} multiline />
       )}
+      {to?.inputs?.length ? <div className="link-args"><div className="field-label">Аргументы входа</div>{to.inputs.map((input) => <ExprField key={input.name} label={`${input.name} · ${input.type}`} hint={`По умолчанию: ${String(input.default)}`} value={link.args?.[input.name] ?? ""} project={project} extra={localNames} onChange={(value) => editCanvas((current) => {
+        const target = current.links.find(same);
+        if (!target) return;
+        const args = { ...(target.args ?? {}) };
+        if (value.trim()) args[input.name] = value;
+        else delete args[input.name];
+        target.args = Object.keys(args).length ? args : undefined;
+      })} />)}</div> : null}
       {!link.condition && !link.action && <div className="field-hint pad">условие — щелчок по входному пину, действие — двойной щелчок по выходному</div>}
       <button
         className="danger"

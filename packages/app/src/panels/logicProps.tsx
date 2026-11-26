@@ -1,8 +1,8 @@
 // свойства переменных, списков и функций: формы редактирования и «где используется»
 import { useMemo, useState } from "react";
 import type { InkFunction, InkListDef, Project, Variable as VarDef, VarType } from "@visink/core";
-import { canvasLocations, isValidInkName } from "@visink/core";
-import { useStore } from "../store";
+import { canvasLocations, isValidInkName, withTextSpans } from "@visink/core";
+import { editAtomic, useStore } from "../store";
 import { askUser } from "../tauriFs";
 import { renameVariable, variableUsages } from "../ops";
 import type { Usage } from "../ops";
@@ -138,11 +138,15 @@ export function FunctionProps({ name, project, owner }: { name: string; project:
   const usages = useMemo(() => variableUsages(project, name, owner), [project, name, owner]);
   const [params, setParams] = useState(() => f?.params.join(", ") ?? "");
   if (!f) return null;
-  const set = (fn: (x: InkFunction) => void) =>
-    edit((p) => {
+  const set = (fn: (x: InkFunction) => void, atomic = false) =>
+    (atomic ? editAtomic : edit)((p) => {
       const x = p.variables.functions.find((y) => y.name === name && y.owner === owner);
       if (x) fn(x);
     });
+  const setDescription = (value: string) => set((x) => {
+    x.description = value || undefined;
+    x.formatting = withTextSpans(x.formatting, "description", []);
+  });
   const parsed = params.split(",").map((x) => x.trim()).filter(Boolean);
   const bad = parsed.filter((x) => !isValidInkName(x));
   const problems = (check?.diagnostics ?? []).filter((d) => d.func === name);
@@ -167,7 +171,7 @@ export function FunctionProps({ name, project, owner }: { name: string; project:
         <input className="mono" spellCheck={false} autoCapitalize="off" autoCorrect="off" value={params} placeholder="who, amount" onChange={(e) => setParams(e.target.value)} onBlur={() => !bad.length && set((x) => (x.params = parsed))} />
       </Field>
       <Field label="Описание" hint="показывается в подсказках при вводе">
-        <Text value={f.description ?? ""} onChange={(v) => set((x) => (x.description = v || undefined))} />
+        <input value={f.description ?? ""} onChange={(e) => setDescription(e.target.value)} />
       </Field>
       <label className="check">
         <input type="checkbox" checked={!!f.external} onChange={(e) => set((x) => (x.external = e.target.checked || undefined))} />

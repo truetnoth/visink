@@ -7,7 +7,7 @@ import { editAtomic, useStore } from '../store';
 import { addCanvas, addCard, addNote, defaultNpc, deleteCards } from '../ops';
 import { addVariableSet, renameNamespace } from '../namespaceOps';
 import { cardTreeId, indexHierarchy, logicTreeId, projectHierarchy, type TreeNode } from '../hierarchy';
-import { createFolder, deleteEntity, deleteFolder, deleteVariableSet, moveTreeItems, renameFolder, type TreeItem } from '../organization';
+import { deleteEntity, deleteFolder, deleteVariableSet, moveTreeItems, renameFolder, type TreeItem } from '../organization';
 import { beginTreeDrag, draggedItems, endTreeDrag, treeDestination, treeItem, resolveTreeDrop } from '../treeDrag';
 import { CreateMenu, type MenuItem } from '../canvas/menus';
 import { TYPE_ICON, TYPE_LABEL } from '../canvas/constants';
@@ -150,9 +150,6 @@ export function ProjectTree() {
     const n = menu.node, items: MenuItem[] = [];
     const parent = index.parents.get(n.id); const context = treeDestination(n) ?? (parent ? treeDestination(index.nodes.get(parent)!) : null);
     const place = (n.kind === 'var' || n.kind === 'func' || n.kind === 'list') && n.owner ? { section: 'variables' as const, owner: n.owner } : context && 'section' in context ? context : null;
-    if (place && place.section !== 'variables' && !place.owner) items.push({ label: 'Создать папку', icon: Folder, run: () => ask('Название папки', 'Новая папка', (name) => {
-      let id = ''; editAtomic((p) => { id = createFolder(p, place.section, name, place.folderId); }); setPicked([`folder:${id}`]); setExpanded((old) => new Set([...old, n.id]));
-    }) });
     if (n.kind === 'folder') {
       items.push({ label: 'Переименовать папку', icon: Pencil, run: () => ask('Название папки', n.title, (name) => editAtomic((p) => renameFolder(p, n.folderId!, name))) });
 

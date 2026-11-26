@@ -154,7 +154,7 @@ export interface Option<T extends string = string> {
 }
 
 /** Всплывающий список под якорем: портал в body, переворачивается вверх у нижнего края окна. */
-function Popup({ anchor, onClose, children }: { anchor: HTMLElement; onClose: () => void; children: React.ReactNode }) {
+export function Popup({ anchor, onClose, children, minWidth = 180 }: { anchor: HTMLElement; onClose: () => void; children: React.ReactNode; minWidth?: number }) {
   const ref = useRef<HTMLDivElement>(null);
   const [pos, setPos] = useState<{ left: number; top?: number; bottom?: number; width: number; maxHeight: number }>();
   useLayoutEffect(() => {
@@ -162,13 +162,14 @@ function Popup({ anchor, onClose, children }: { anchor: HTMLElement; onClose: ()
     const below = window.innerHeight - r.bottom - 8;
     const above = r.top - 8;
     const flip = below < 200 && above > below;
+    const width = Math.max(r.width, minWidth);
     setPos({
-      left: Math.min(r.left, window.innerWidth - Math.max(r.width, 180) - 8),
-      width: Math.max(r.width, 180),
+      left: Math.min(r.left, window.innerWidth - width - 8),
+      width,
       ...(flip ? { bottom: window.innerHeight - r.top + 4 } : { top: r.bottom + 4 }),
       maxHeight: Math.min(320, flip ? above : below),
     });
-  }, [anchor]);
+  }, [anchor, minWidth]);
   useEffect(() => {
     const down = (e: MouseEvent) => {
       if (!ref.current?.contains(e.target as globalThis.Node) && !anchor.contains(e.target as globalThis.Node)) onClose();
@@ -194,7 +195,7 @@ function Popup({ anchor, onClose, children }: { anchor: HTMLElement; onClose: ()
   );
 }
 
-function OptionRow({ option, active, selected, onPick, onHover }: { option: Option; active: boolean; selected: boolean; onPick: () => void; onHover: () => void }) {
+export function OptionRow({ option, active, selected, onPick, onHover }: { option: Option; active: boolean; selected: boolean; onPick: () => void; onHover: () => void }) {
   const ref = useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (active) ref.current?.scrollIntoView({ block: "nearest" });
@@ -216,6 +217,10 @@ export function Select<T extends string>({
   onChange,
   placeholder = "—",
   mono,
+  label,
+  returnFocus,
+  preventPointerFocus,
+  popupMinWidth,
 }: {
   /** null — у выделенных карточек разные значения */
   value: T | null;
@@ -223,6 +228,10 @@ export function Select<T extends string>({
   onChange: (v: T) => void;
   placeholder?: string;
   mono?: boolean;
+  label?: string;
+  returnFocus?: () => void;
+  preventPointerFocus?: boolean;
+  popupMinWidth?: number;
 }) {
   const [open, setOpen] = useState(false);
   const [active, setActive] = useState(0);
@@ -236,7 +245,8 @@ export function Select<T extends string>({
   const pick = (o: Option<T>) => {
     setOpen(false);
     if (o.value !== value) onChange(o.value);
-    button.current?.focus();
+    if (returnFocus) returnFocus();
+    else button.current?.focus();
   };
   const close = useCallback(() => setOpen(false), []);
   return (
@@ -244,8 +254,19 @@ export function Select<T extends string>({
       <button
         ref={button}
         type="button"
+        aria-label={label}
+        aria-expanded={open}
         className={`select ${mono ? "mono" : ""} ${open ? "open" : ""}`}
-        onClick={() => (open ? setOpen(false) : show())}
+        onPointerDown={(event) => { if (preventPointerFocus && event.button === 0) event.preventDefault(); }}
+        onClick={(event) => {
+          if (open) {
+            close();
+            returnFocus?.();
+          } else {
+            if (preventPointerFocus) event.currentTarget.focus({ preventScroll: true });
+            show();
+          }
+        }}
         onKeyDown={(e) => {
           if (e.key === "ArrowDown" || e.key === "ArrowUp") {
             e.preventDefault();
@@ -258,6 +279,7 @@ export function Select<T extends string>({
             e.preventDefault();
             e.stopPropagation();
             setOpen(false);
+            returnFocus?.();
           } else if (e.key.length === 1 && !e.metaKey && !e.ctrlKey) {
             // ввод первых букв — переход к варианту
             const now = Date.now();
@@ -275,7 +297,7 @@ export function Select<T extends string>({
         <ChevronDown size={14} className="select-chevron" />
       </button>
       {open && button.current && (
-        <Popup anchor={button.current} onClose={close}>
+        <Popup anchor={button.current} onClose={close} minWidth={popupMinWidth}>
           {options.map((o, i) => (
             <OptionRow key={o.value} option={o} active={i === active} selected={o.value === value} onPick={() => pick(o)} onHover={() => setActive(i)} />
           ))}

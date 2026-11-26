@@ -317,6 +317,7 @@ function normalizeCanvas(raw: Partial<Canvas> & { cards?: LegacyCard[] }, modern
     id: raw.id ?? "canvas",
     title: raw.title ?? raw.id ?? "",
     ...(raw.legacyId ? { legacyId: raw.legacyId } : {}),
+    ...(raw.formatting ? { formatting: raw.formatting } : {}),
     ...(raw.folderId ? { folderId: raw.folderId } : {}),
     ...(raw.group ? { group: raw.group } : {}),
     ...(start ? { start } : {}),

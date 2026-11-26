@@ -1,5 +1,6 @@
 import { namespaceName } from "@visink/core";
 import { isLegacyRoot, mapStoryText } from "@visink/compiler";
+import { rewriteCardExpression } from "./cardEditing";
 // Операции правки проекта. Все мутируют черновик (копию), store сам делает копию и пишет историю.
 import type { Canvas, Card, CardType, Link, Note, Point, Project } from "@visink/core";
 import { canvasAtPath, createCanvas, createCard, flowCards, guessStart, isPlayerCard, linkId, newCardId, newNoteId, toInkName, canvasLocations, ensureCanvasBoundaries, isBoundaryCard, prepareProject } from "@visink/core";
@@ -219,6 +220,7 @@ export function pasteFragment(project: Project, canvas: Canvas, fragment: Fragme
   const cloneCanvas = (src: Canvas): Canvas => {
     const dest = createCanvas(`${root.id}_${src.id}`, src.title);
     dest.owner = src.owner;
+    if (src.formatting) dest.formatting = structuredClone(src.formatting);
     const localIds = new Map<string, string>();
     for (const srcCard of src.cards) {
       const card = cloneCard(srcCard, dest, true);
@@ -452,13 +454,13 @@ function usageMentions(project: Project, expr: string | undefined, name: string,
   return !params.includes(name) && !hasLocal(project, functionOwner, name) && mentions(expr, name);
 }
 
-function textUsage(project: Project, text: string | undefined, name: string, owner?: string) {
+function textUsage(project: Project, text: string | undefined, name: string, owner?: string, localNames: string[] = []) {
   if (!text) return false;
   let used = false;
   mapStoryText(project, text, (expression) => {
-    if (usageMentions(project, expression, name, owner)) used = true;
+    if (usageMentions(project, expression, name, owner, undefined, localNames)) used = true;
     return expression;
-  });
+  }, { localNames });
   return used;
 }
 
@@ -470,14 +472,17 @@ export function variableUsages(project: Project, name: string, owner?: string): 
     if (usageMentions(project, f.body, name, owner, f.owner, f.params)) out.push({ key: "", func: f.name, funcOwner: f.owner });
   }
   for (const [key, c] of Object.entries(project.canvases)) {
-    for (const { canvas, card, path } of flowCards(c)) {
-      if (mentions(card.condition, owner ? `${namespaceName(project, owner)}.${name}` : name) || mentions(card.action, owner ? `${namespaceName(project, owner)}.${name}` : name) || (card.type === "ink" && mentions(card.text, owner ? `${namespaceName(project, owner)}.${name}` : name)) || card.type === "line" && (textUsage(project, card.text, name, owner) || textUsage(project, card.menuText, name, owner))) {
+    for (const { card, path } of flowCards(c)) {
+      const locals = card.inputs?.map((input) => input.name);
+      const used = (expr?: string) => usageMentions(project, expr, name, owner, undefined, locals);
+      if (used(card.condition) || used(card.action) || card.type === "ink" && used(card.text) || card.type === "line" && (textUsage(project, card.text, name, owner, locals) || textUsage(project, card.menuText, name, owner, locals))) {
         out.push({ key, path, card: card.id });
       }
     }
     const visitLinks = (flow: Canvas, path: string[]) => {
       for (const l of flow.links) {
-        if (mentions(l.condition, owner ? `${namespaceName(project, owner)}.${name}` : name) || mentions(l.action, owner ? `${namespaceName(project, owner)}.${name}` : name)) out.push({ key, path, link: { from: l.from, to: l.to, ...(l.port ? { port: l.port } : {}) } });
+        const locals = flow.cards.find((card) => card.id === l.from && card.type !== "flow")?.inputs?.map((input) => input.name);
+        if ([l.condition, l.action, ...Object.values(l.args ?? {})].some((expr) => usageMentions(project, expr, name, owner, undefined, locals))) out.push({ key, path, link: { from: l.from, to: l.to, ...(l.port ? { port: l.port } : {}) } });
       }
       for (const card of flow.cards) if (card.flow) visitLinks(card.flow, [...path, card.id]);
     };
@@ -504,18 +509,23 @@ export function renameVariable(project: Project, from: string, to: string, owner
   for (const f of project.variables.functions) f.body = renameExpr(f.body, f.owner, f.params);
   for (const c of Object.values(project.canvases)) {
     for (const { card } of flowCards(c)) {
-      if (card.condition) card.condition = renameExpr(card.condition);
-      if (card.action) card.action = renameExpr(card.action);
+      const locals = card.inputs?.map((input) => input.name);
+      const rename = (expr: string) => renameExpr(expr, undefined, locals);
+      if (card.condition) card.condition = rename(card.condition);
+      if (card.action) card.action = rename(card.action);
       if (card.type === "line") {
-        if (card.text) card.text = mapStoryText(project, card.text, renameExpr);
-        if (card.menuText) card.menuText = mapStoryText(project, card.menuText, renameExpr);
+        rewriteCardExpression(project, card, "text", rename);
+        rewriteCardExpression(project, card, "menuText", rename);
       }
-      if (card.type === "ink" && card.text) card.text = renameExpr(card.text);
+      if (card.type === "ink" && card.text) card.text = rename(card.text);
     }
     const visitLinks = (flow: Canvas) => {
       for (const link of flow.links) {
-        if (link.condition) link.condition = renameExpr(link.condition);
-        if (link.action) link.action = renameExpr(link.action);
+        const locals = flow.cards.find((card) => card.id === link.from && card.type !== "flow")?.inputs?.map((input) => input.name);
+        const rename = (expr: string) => renameExpr(expr, undefined, locals);
+        if (link.condition) link.condition = rename(link.condition);
+        if (link.action) link.action = rename(link.action);
+        for (const [key, value] of Object.entries(link.args ?? {})) link.args![key] = rename(value);
       }
       for (const card of flow.cards) if (card.flow) visitLinks(card.flow);
     };

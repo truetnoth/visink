@@ -220,6 +220,7 @@ export function App() {
     };
     const onEscape = (e: KeyboardEvent) => {
       if (e.key !== "Escape" || document.querySelector(".popup, .selection-color-picker")) return;
+      if (document.activeElement instanceof HTMLElement && document.activeElement.isContentEditable) return;
       if (about) { setAbout(false); e.preventDefault(); e.stopImmediatePropagation(); return; }
       if (settings) { setSettings(false); e.preventDefault(); e.stopImmediatePropagation(); return; }
       if (useStore.getState().editorOpen) { useStore.getState().closeEditor(); e.preventDefault(); e.stopImmediatePropagation(); return; }

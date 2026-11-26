@@ -949,3 +949,99 @@ describe("интерполяция текста через Ink", () => {
     expect(story.ContinueMaximally()).toContain("Теперь 100");
   });
 });
+
+
+describe("локальные входы карточек", () => {
+  it("вычисляет аргументы в источнике и сбрасывает отсутствующие значения при повторном входе", () => {
+    const p = createProject("inputs");
+    p.variables.vars.push({ name: "base", type: "int", default: 5 }, { name: "visits", type: "int", default: 0 }, { name: "input_1", type: "int", default: 99 });
+    const main = p.canvases.main;
+    const first = createCard("first", "hub");
+    const again = createCard("again", "hub");
+    const target = createCard("target", "line", {
+      speaker: "ent_narrator",
+      text: "Локально {input_1}/{input_2}",
+      action: "visits += 1",
+      inputs: [{ name: "input_1", type: "int", default: 5 }, { name: "input_2", type: "string", default: "reset" }],
+    });
+    const unrelated = createCard("unrelated", "line", { speaker: "ent_narrator", text: "Глобально {input_1}" });
+    main.cards.push(first, again, target, unrelated);
+    Object.assign(main.layout, { first: { x: 0, y: 0 }, again: { x: 0, y: 150 }, target: { x: 300, y: 0 }, unrelated: { x: 300, y: 150 } });
+    const entry = main.cards.find((card) => card.type === "entry")!;
+    const exit = main.cards.find((card) => card.type === "exit")!;
+    main.links = [
+      { from: entry.id, to: first.id, order: 0, kind: "divert", direct: true },
+      { from: first.id, to: target.id, order: 0, kind: "divert", args: { input_1: "base + 3", input_2: '"set"' } },
+      { from: target.id, to: again.id, order: 0, kind: "divert", condition: "visits < 2" },
+      { from: target.id, to: exit.id, order: 1, kind: "divert" },
+      { from: again.id, to: target.id, order: 0, kind: "divert" },
+    ];
+    const result = checkProject(p);
+    expect(result.diagnostics.filter((diagnostic) => diagnostic.severity === "error")).toEqual([]);
+    expect(result.build.files.get("main.ink")).toContain("= __visink_inputs_target(__visink_target_input_1, __visink_target_input_2)");
+    const story = new Story(result.storyJson!);
+    story.ChoosePathString("main");
+    expect(story.ContinueMaximally()).toBe("Локально 8/set\nЛокально 5/reset\n");
+    const external = new Story(result.storyJson!);
+    external.ChoosePathString("main.target");
+    expect(external.ContinueMaximally()).toContain("Локально 5/reset");
+    const global = new Story(result.storyJson!);
+    global.ChoosePathString("main.unrelated");
+    expect(global.ContinueMaximally()).toBe("Глобально 99\n");
+  });
+
+  it("использует одинаковые вычисленные значения в preview и после выбора без преждевременного действия", () => {
+    const p = createProject("input-choice");
+    p.variables.vars.push({ name: "roll", type: "int", default: 4 });
+    const main = p.canvases.main;
+    const source = createCard("source", "hub");
+    const option = createCard("option", "line", {
+      speaker: "ent_player",
+      menuText: "Вариант {input_1}",
+      text: "Выбрано {input_1}",
+      inputs: [{ name: "input_1", type: "int", default: 2 }],
+    });
+    const second = createCard("second", "line", {
+      speaker: "ent_player",
+      menuText: "Второй {input_1}",
+      text: "Второе {input_1}",
+      inputs: [{ name: "input_1", type: "int", default: 3 }],
+    });
+    main.cards.push(source, option, second);
+    Object.assign(main.layout, { source: { x: 0, y: 0 }, option: { x: 300, y: 0 }, second: { x: 600, y: 0 } });
+    const entry = main.cards.find((card) => card.type === "entry")!;
+    main.links = [
+      { from: entry.id, to: source.id, order: 0, kind: "divert", direct: true },
+      { from: source.id, to: option.id, order: 0, kind: "divert", args: { input_1: "roll + 1" }, action: "roll = 100" },
+      { from: source.id, to: second.id, order: 1, kind: "divert", args: { input_1: "roll + 2" }, action: "roll = 100" },
+    ];
+    const result = checkProject(p);
+    expect(result.diagnostics.filter((diagnostic) => diagnostic.severity === "error")).toEqual([]);
+    const story = new Story(result.storyJson!);
+    story.ChoosePathString("main");
+    story.ContinueMaximally();
+    expect(story.currentChoices.map((choice) => choice.text)).toEqual(["Вариант 5", "Второй 6"]);
+    expect(story.variablesState["roll"]).toBe(4);
+    story.ChooseChoiceIndex(1);
+    expect(story.ContinueMaximally()).toContain("Второе 6");
+    expect(story.variablesState["roll"]).toBe(100);
+  });
+
+  it("проверяет условие стрелки в источнике и условие входа в цели", () => {
+    const project = createProject("input-gates");
+    const canvas = project.canvases.main;
+    const inputs = [{ name: "input_1", type: "int" as const, default: 0 }];
+    canvas.cards.push(
+      createCard("source", "line", { inputs, text: "Источник {input_1}" }),
+      createCard("target", "line", { inputs, text: "Цель {input_1}", condition: "input_1 == 7" }),
+    );
+    canvas.links = [
+      { from: "__entry", to: "source", order: 0, kind: "divert", direct: true, args: { input_1: "3" } },
+      { from: "source", to: "target", order: 0, kind: "divert", condition: "input_1 == 3", args: { input_1: "input_1 + 4" } },
+      { from: "target", to: "__exit", order: 0, kind: "divert" },
+    ];
+    const result = checkProject(project);
+    expect(result.diagnostics.filter((diagnostic) => diagnostic.severity === "error")).toEqual([]);
+    expect(new Story(result.storyJson!).ContinueMaximally()).toBe("Источник 3\nЦель 7\n");
+  });
+});

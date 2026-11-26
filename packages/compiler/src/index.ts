@@ -2,7 +2,7 @@ import type { Canvas, Card, Link, Project, Variable } from "@visink/core";
 import { namespaceName, qualifiedName, namespaceError, flowCards, isPlayerCard, isValidInkName, stableStringify, canvasLocations, prepareProject, isBoundaryCard } from "@visink/core";
 import { escapeInkText, escapeTagValue, mapInkTextExpressions } from "./escape";
 
-export { escapeInkText, escapeTagValue } from "./escape";
+export { escapeInkText, escapeTagValue, mapInkTextExpressions } from "./escape";
 
 export type Severity = "error" | "warning";
 
@@ -77,6 +77,12 @@ export interface BuildResult {
 
 const HEADER = "// Сгенерировано Visink — не править вручную, правки пропадут при следующей сборке.";
 
+export const INK_BUILTINS = [
+  "RANDOM", "SEED_RANDOM", "CHOICE_COUNT", "TURNS", "TURNS_SINCE", "READ_COUNT",
+  "INT", "FLOOR", "FLOAT", "POW", "MIN", "MAX",
+  "LIST_COUNT", "LIST_MIN", "LIST_MAX", "LIST_ALL", "LIST_INVERT", "LIST_RANDOM", "LIST_VALUE", "LIST_RANGE",
+];
+
 /** Условие на входе в карточку. У карточки «условие» поле condition — это её вопрос, а не вход. */
 function gateOf(card: Card): string {
   if (card.type === "condition") return "";
@@ -131,7 +137,7 @@ export function runtimeCanvasId(project: Project, canvas: Canvas): string {
 function replaceLogicToken(text: string, from: string, to: string): string {
   const escaped = from.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   const re = new RegExp(`(?<![\\w.])${escaped}(?![\\w])`, "g");
-  return text.split(/("[^"]*")/).map((part, i) => i % 2 ? part : part.replace(re, to)).join("");
+  return text.split(/("(?:[^"\\]|\\.)*")/).map((part, i) => i % 2 ? part : part.replace(re, to)).join("");
 }
 
 /** Переводит редакторские ссылки на свойства персонажей в глобальные имена Ink. */
@@ -144,6 +150,21 @@ export function compileLogic(project: Project, text: string, owner?: string, par
       out = replaceLogicToken(out, item.name, scopedInkName(owner, item.name, project));
     }
   }
+  return out;
+}
+
+function inputStitchName(card: Card) {
+  return `__visink_inputs_${card.id}`;
+}
+
+function inputParamName(card: Card, name: string) {
+  return `__visink_${card.id}_${name}`;
+}
+
+function compileCardLogic(project: Project, text: string | undefined, card?: Card) {
+  if (text == null) return undefined;
+  let out = compileLogic(project, text);
+  if (card) for (const input of card.inputs ?? []) out = replaceLogicToken(out, input.name, inputParamName(card, input.name));
   return out;
 }
 
@@ -179,17 +200,36 @@ function isTextExpression(expression: string, knownNames: Set<string>) {
 }
 
 function projectTextNames(project: Project) {
-  return new Set([...project.variables.vars, ...project.variables.lists, ...project.variables.functions].map((item) => qualifiedName(project, item)));
+  return new Set([
+    ...INK_BUILTINS,
+    ...[...project.variables.vars, ...project.variables.lists, ...project.variables.functions].map((item) => qualifiedName(project, item)),
+    ...project.variables.lists.flatMap((list) => list.items.map((item) => `${qualifiedName(project, list)}.${item}`)),
+  ]);
+}
+
+export function isStoryTextExpression(project: Project, expression: string, localNames: string[] = []) {
+  const names = projectTextNames(project);
+  for (const name of localNames) names.add(name);
+  return isTextExpression(expression, names);
 }
 
 /** Применяет правку только к распознанным шаблонам реплик, не экранируя остальной текст. */
-export function mapStoryText(project: Project, text: string, transform: (expression: string) => string) {
+export function mapStoryText(
+  project: Project,
+  text: string,
+  transform: (expression: string) => string,
+  options: { localNames?: string[]; onReplace?: (range: { start: number; end: number }, replacement: string) => void } = {},
+) {
   if (!text.includes("{")) return text;
   const names = projectTextNames(project);
-  return mapInkTextExpressions(text, (expression) => {
+  for (const name of options.localNames ?? []) names.add(name);
+  return mapInkTextExpressions(text, (expression, range) => {
     if (!isTextExpression(expression, names)) return null;
     const next = transform(expression);
-    return next === expression ? null : `{${next}}`;
+    if (next === expression) return null;
+    const replacement = `{${next}}`;
+    options.onReplace?.(range, replacement);
+    return replacement;
   });
 }
 
@@ -215,15 +255,26 @@ export function compileCanvas(project: Project, key: string, source: Canvas, dia
   const location = canvasLocations(project).find((x) => x.canvas === source || x.canvas.id === source.id);
   const compile = (text: string | undefined) => text == null ? undefined : compileLogic(project, text);
   const textNames = projectTextNames(project);
-  const storyText = (text: string) => escapeInkText(text, (expression) => {
-    if (!isTextExpression(expression, textNames)) return null;
-    return compileLogic(project, expression);
-  });
+  const sourceById = new Map(source.cards.map((card) => [card.id, card]));
+  const linkSource = (card: Card | undefined) => card?.type === "flow" ? undefined : card;
+  const storyText = (text: string, card?: Card, bindings: Record<string, string> = {}) => {
+    const locals = card?.inputs?.map((input) => input.name) ?? [];
+    const names = new Set([...textNames, ...locals]);
+    return escapeInkText(text, (expression) => {
+      if (!isTextExpression(expression, names)) return null;
+      let compiled = compileLogic(project, expression);
+      for (const name of locals) compiled = replaceLogicToken(compiled, name, bindings[name] ?? (card ? inputParamName(card, name) : name));
+      return compiled;
+    });
+  };
   const canvas: Canvas = {
     ...source,
     id: runtimeCanvasId(project, source),
-    cards: source.cards.map((card) => ({ ...card, condition: compile(card.condition), action: compile(card.action), ...(card.type === "ink" ? { text: compile(card.text) } : {}) })),
-    links: source.links.map((link) => ({ ...link, condition: compile(link.condition), action: compile(link.action) })),
+    cards: source.cards.map((card) => ({ ...card, condition: compileCardLogic(project, card.condition, card), action: compileCardLogic(project, card.action, card), ...(card.type === "ink" ? { text: compileCardLogic(project, card.text, card) } : {}) })),
+    links: source.links.map((link) => {
+      const card = linkSource(sourceById.get(link.from));
+      return { ...link, condition: compileCardLogic(project, link.condition, card), action: compileCardLogic(project, link.action, card) };
+    }),
   };
   const seenCards = new Set<string>();
   for (const card of canvas.cards) {
@@ -231,7 +282,6 @@ export function compileCanvas(project: Project, key: string, source: Canvas, dia
     seenCards.add(card.id);
   }
   const byId = new Map(canvas.cards.map((c) => [c.id, c]));
-  const sourceById = new Map(source.cards.map((card) => [card.id, card]));
   const outgoing = new Map<string, Link[]>();
   for (const link of canvas.links) {
     if (!outgoing.has(link.from)) outgoing.set(link.from, []);
@@ -239,19 +289,30 @@ export function compileCanvas(project: Project, key: string, source: Canvas, dia
   }
   for (const [k, v] of outgoing) outgoing.set(k, sortLinks(v));
 
+  const inputValue = (input: NonNullable<Card["inputs"]>[number], args?: Link["args"], sourceCard?: Card) =>
+    compileCardLogic(project, args?.[input.name]?.trim() || undefined, linkSource(sourceCard))
+      ?? (input.type === "string" ? JSON.stringify(String(input.default)) : varLiteral(input));
+  const inputCall = (card: Card, args?: Link["args"], bindings: Record<string, string> = {}, sourceCard?: Card) =>
+    card.inputs?.length
+      ? `(${card.inputs.map((input) => bindings[input.name] ?? inputValue(input, args, sourceCard)).join(", ")})`
+      : "";
+
   type OptionRoute = {
     option: Card;
+    args?: Record<string, string>;
     canvas: Canvas;
+    optionGate: string;
     gates: string[];
     actions: { canvas: string; card: string; action?: string; link?: LinkRef }[];
   };
   const linksFrom = (sourceCanvas: Canvas, id: string): Link[] => sourceCanvas === source
     ? outgoing.get(id) ?? []
     : sortLinks(sourceCanvas.links.filter((l) => l.from === id)).map((l) => ({ ...l, condition: compile(l.condition), action: compile(l.action) }));
+  const hasTransitivePayload = (link: Link, target: Card) => !isPlayerCard(project, target) && (!!target.inputs?.length || !!Object.keys(link.args ?? {}).length);
   /** Не null только для маршрута, который целиком состоит из вложенностей/хабов и вариантов игрока. */
   const collectOptions = (sourceCanvas: Canvas, target: Card, seen = new Set<string>(), transparent = false): OptionRoute[] | null => {
     const gate = target.type === "condition" ? "" : compile(target.condition)?.trim() || "";
-    if (isPlayerCard(project, target)) return [{ option: target, canvas: sourceCanvas, gates: gate ? [gate] : [], actions: [] }];
+    if (isPlayerCard(project, target)) return [{ option: target, canvas: sourceCanvas, optionGate: gate, gates: [], actions: [] }];
     if (target.type !== "flow" && (target.type !== "hub" && target.type !== "entry" || !transparent)) return null;
     const key = `${sourceCanvas.id}.${target.id}`;
     if (seen.has(key)) return null;
@@ -265,13 +326,14 @@ export function compileCanvas(project: Project, key: string, source: Canvas, dia
     const out: OptionRoute[] = [];
     for (const link of links) {
       const nextTarget = nextCanvas.cards.find((c) => c.id === link.to);
-      if (!nextTarget) return null;
+      if (!nextTarget || hasTransitivePayload(link, nextTarget)) return null;
       const routes = collectOptions(nextCanvas, nextTarget, nextSeen, true);
       if (!routes) return null;
       const linkGate = compile(link.condition)?.trim() || "";
       const linkRef = { from: link.from, to: link.to, ...(link.port ? { port: link.port } : {}) };
       for (const route of routes) out.push({
         ...route,
+        args: link.args ?? route.args,
         gates: [...(gate ? [gate] : []), ...(linkGate ? [linkGate] : []), ...route.gates],
         actions: [
           ...prefix,
@@ -286,13 +348,13 @@ export function compileCanvas(project: Project, key: string, source: Canvas, dia
   const diag = (severity: Severity, code: string, message: string, card?: string) =>
     diagnostics.push({ severity, code, message, canvas: key, card });
 
-  const divert = (id: string, from: Card): string => {
+  const divert = (id: string, from: Card, link?: Link, bindings?: Record<string, string>): string => {
     const target = byId.get(id);
     if (!target) {
       diag("error", "broken-link", `Стрелка ведёт на несуществующую карточку ${id}`, from.id);
       return "-> DONE";
     }
-    return `-> ${stitchName(target)}`;
+    return `-> ${target.inputs?.length ? inputStitchName(target) : stitchName(target)}${inputCall(target, link?.args, bindings, from)}`;
   };
 
   /** Строка ink; card и link — куда показывать ошибки в ней (по умолчанию — на текущую карточку). */
@@ -301,6 +363,8 @@ export function compileCanvas(project: Project, key: string, source: Canvas, dia
   const refOf = (l: Link): LinkRef => ({ from: l.from, to: l.to, ...(l.port ? { port: l.port } : {}) });
   const linkCond = (l: Link) => l.condition?.trim() ?? "";
   const both = (a: string, b: string) => (a && b ? `(${a}) and (${b})` : a || b);
+  const bindGate = (target: Card, condition: string, values: Record<string, string>) =>
+    Object.entries(values).reduce((text, [name, value]) => replaceLogicToken(text, inputParamName(target, name), value), condition);
   /** Действие стрелки строками с отступом — внутри выбора или ветки. */
   const linkActions = (l: Link, from: Card): Out[] =>
     actionLines(l.action).map((text) => ({ text: `    ${text}`, card: from.id, link: refOf(l) }));
@@ -308,51 +372,99 @@ export function compileCanvas(project: Project, key: string, source: Canvas, dia
   const routing = (card: Card, links = outgoing.get(card.id) ?? []): Out[] => {
     if (!links.length) return ["-> DONE"];
     if (card.type === "entry" && links.length === 1 && links[0].direct) {
-      return [...actionLines(links[0].action).map((text) => ({ text, card: card.id, link: refOf(links[0]) })), divert(links[0].to, card)];
+      return [...actionLines(links[0].action).map((text) => ({ text, card: card.id, link: refOf(links[0]) })), divert(links[0].to, card, links[0])];
     }
     const pairs = links.flatMap((l) => {
       const t = byId.get(l.to);
-      return t ? [{ l, t, routes: collectOptions(source, t) }] : [];
+      return t ? [{ l, t, routes: hasTransitivePayload(l, t) ? null : collectOptions(source, t) }] : [];
     });
-    if (!pairs.length) return [divert(links[0].to, card)];
+    if (!pairs.length) return [divert(links[0].to, card, links[0])];
     const players = pairs.flatMap(({ l, t, routes }) => routes?.map((route) => ({ l, t, route })) ?? []);
     const condOf = ({ l, t }: { l: Link; t: Card }) => both(gateOf(t), linkCond(l));
+    const localGate = (target: Card) => (target.inputs ?? []).some((input) =>
+      replaceLogicToken(gateOf(target), inputParamName(target, input.name), "0") !== gateOf(target));
+    // A destination gate sees the same values as the selected route, including calls such as RANDOM.
+    const gatedRoute = ({ l, t }: { l: Link; t: Card }, index: number): Out[] => {
+      const ref = { card: card.id, link: refOf(l) };
+      const bindings: Record<string, string> = {};
+      const declarations: Out[] = (t.inputs ?? []).map((input) => {
+        const temp = `__visink_gate_${card.id}_${l.port ?? "default"}_${index}_${input.name}`;
+        bindings[input.name] = temp;
+        return { text: `    ~ temp ${temp} = ${inputValue(input, l.args, card)}`, ...ref };
+      });
+      return [
+        { text: `{ ${linkCond(l) || "true"}:`, ...ref },
+        ...declarations,
+        { text: `    { ${bindGate(t, gateOf(t), bindings)}:`, card: t.id },
+        ...linkActions(l, card).map((line) => typeof line === "string" ? `    ${line}` : { ...line, text: `    ${line.text}` }),
+        `        ${divert(t.id, card, l, bindings)}`,
+        "    }",
+        "}",
+      ];
+    };
     if (players.length) {
       const ordinary = pairs.filter(({ routes }) => !routes);
       if (ordinary.some((pair) => !condOf(pair))) {
         diag("error", "mixed-links", "При вариантах игрока обычная карточка должна иметь условие на входном пине", card.id);
       }
-      const routes = ordinary.flatMap(({ l, t }): Out[] => {
+      const routes = ordinary.flatMap(({ l, t }, index): Out[] => {
+        if (localGate(t)) return gatedRoute({ l, t }, index);
         const cond = condOf({ l, t });
         if (!cond) return [];
         const ref = { card: linkCond(l) && !gateOf(t) ? card.id : t.id, ...(linkCond(l) ? { link: refOf(l) } : {}) };
         const acts = linkActions(l, card);
         return acts.length
-          ? [{ text: `{ ${cond}:`, ...ref }, ...acts, `    ${divert(t.id, card)}`, "}"]
-          : [{ text: `{${cond}: ${divert(t.id, card)}}`, ...ref }];
+          ? [{ text: `{ ${cond}:`, ...ref }, ...acts, `    ${divert(t.id, card, l)}`, "}"]
+          : [{ text: `{${cond}: ${divert(t.id, card, l)}}`, ...ref }];
       });
       const ordered = [...players.filter(({ route }) => route.option.repeat !== "fallback"), ...players.filter(({ route }) => route.option.repeat === "fallback")];
-      return [...routes, ...ordered.flatMap(({ l, t, route }): Out[] => {
+      const preview: Out[] = [];
+      const rendered = ordered.flatMap(({ l, t, route }, optionIndex): Out[] => {
         const option = route.option;
+        const optionArgs = option.id === t.id && route.canvas === source ? l.args : route.args;
+        const bindings: Record<string, string> = {};
+        for (const input of option.inputs ?? []) {
+          const temp = `__visink_preview_${card.id}_${l.port ?? "default"}_${optionIndex}_${input.name}`;
+          preview.push({ text: `~ temp ${temp} = ${inputValue(input, optionArgs, card)}`, card: card.id, link: refOf(l) });
+          bindings[input.name] = temp;
+        }
         const lc = linkCond(l);
-        const conditions = [lc, ...route.gates].filter(Boolean);
+        const optionGate = Object.entries(bindings).reduce((text, [name, value]) => replaceLogicToken(text, name, value), route.optionGate);
+        const conditions = [lc, ...route.gates, optionGate].filter(Boolean);
         const conds = conditions.map((c) => `{${c}} `).join("");
         const ref = { canvas: lc ? source.id : route.canvas.id, card: lc ? card.id : option.id, ...(lc ? { link: refOf(l) } : {}) };
-        const head = option.repeat === "fallback" ? `* ${conds}->` : `${option.repeat === "sticky" ? "+" : "*"} ${conds}[${storyText(option.menuText || option.text || "…")}]`;
+        const head = option.repeat === "fallback" ? `* ${conds}->` : `${option.repeat === "sticky" ? "+" : "*"} ${conds}[${storyText(option.menuText || option.text || "…", option, bindings)}]`;
         const acts = [
           ...linkActions(l, card),
           ...route.actions.flatMap((item) => actionLines(item.action).map((text) => ({ text: `    ${text}`, canvas: item.canvas, card: item.card, ...(item.link ? { link: item.link } : {}) }))),
         ];
-        const path = route.canvas === source ? stitchName(option) : `${runtimeCanvasId(project, route.canvas)}.${stitchName(option)}`;
+        const optionName = option.inputs?.length ? inputStitchName(option) : stitchName(option);
+        const path = `${route.canvas === source ? optionName : `${runtimeCanvasId(project, route.canvas)}.${optionName}`}${inputCall(option, optionArgs, bindings, card)}`;
         const target = `-> ${path}`;
         if (!acts.length) return [{ text: option.repeat === "fallback" ? `${head} ${path}` : `${head} ${target}`, ...ref }];
         return [{ text: head, ...ref }, ...acts, { text: `    ${target}`, card: option.id }];
-      }), "* -> DONE"];
+      });
+      return [...routes, ...preview, ...rendered, "* -> DONE"];
     }
     if (!condOf(pairs[0])) {
       if (pairs.length > 1) diag("warning", "unreachable-branch", "Несколько стрелок без условия: сработает только первая", card.id);
       const { l, t } = pairs[0];
-      return [...actionLines(l.action).map((text) => ({ text, card: card.id, link: refOf(l) })), divert(t.id, card)];
+      return [...actionLines(l.action).map((text) => ({ text, card: card.id, link: refOf(l) })), divert(t.id, card, l)];
+    }
+    if (pairs.some(({ t }) => localGate(t))) {
+      const out: Out[] = [];
+      for (const [index, pair] of pairs.entries()) {
+        const { l, t } = pair;
+        if (localGate(t)) {
+          out.push(...gatedRoute(pair, index));
+          continue;
+        }
+        const cond = condOf(pair);
+        const acts = linkActions(l, card);
+        if (!cond) return [...out, ...acts, divert(t.id, card, l)];
+        out.push({ text: `{ ${cond}:`, card: card.id, link: refOf(l) }, ...acts, `    ${divert(t.id, card, l)}`, "}");
+      }
+      return [...out, "-> DONE"];
     }
     const out: Out[] = ["{"];
     let hasElse = false;
@@ -366,8 +478,8 @@ export function compileCanvas(project: Project, key: string, source: Canvas, dia
       const label = cond ? `- ${cond}:` : "- else:";
       const ref = { card: linkCond(l) && !gateOf(t) ? card.id : t.id, ...(linkCond(l) ? { link: refOf(l) } : {}) };
       const acts = linkActions(l, card);
-      if (acts.length) out.push({ text: label, ...ref }, ...acts, `    ${divert(t.id, card)}`);
-      else out.push({ text: `${label} ${divert(t.id, card)}`, ...ref });
+      if (acts.length) out.push({ text: label, ...ref }, ...acts, `    ${divert(t.id, card, l)}`);
+      else out.push({ text: `${label} ${divert(t.id, card, l)}`, ...ref });
       if (!cond) hasElse = true;
     }
     if (!hasElse) out.push("- else: -> DONE");
@@ -376,7 +488,7 @@ export function compileCanvas(project: Project, key: string, source: Canvas, dia
   };
 
   const lineText = (card: Card): string | null => {
-    const text = storyText(card.text ?? "");
+    const text = storyText(card.text ?? "", card);
     if (!text) {
       if (!isPlayerCard(project, card)) diag("warning", "empty-line", "Пустая реплика", card.id);
       return null;
@@ -394,7 +506,7 @@ export function compileCanvas(project: Project, key: string, source: Canvas, dia
   };
 
   const rawInk = (card: Card): string => {
-    const text = compile(card.text) ?? "";
+    const text = card.text ?? "";
     if (!canvas.legacyId) return text;
     const legacyLocations = canvasLocations(project).filter((x) => x.canvas.legacyId);
     const targets = new Map<string, string>();
@@ -516,7 +628,14 @@ export function compileCanvas(project: Project, key: string, source: Canvas, dia
   }
   const cardInk: Record<string, string> = {};
   for (const card of order) {
-    const block: Out[] = [`= ${stitchName(card)}`, ...body(card)];
+    const block: Out[] = card.inputs?.length
+      ? [
+        `= ${stitchName(card)}`,
+        `-> ${inputStitchName(card)}${inputCall(card)}`,
+        `= ${inputStitchName(card)}(${card.inputs.map((input) => inputParamName(card, input.name)).join(", ")})`,
+        ...body(card),
+      ]
+      : [`= ${stitchName(card)}`, ...body(card)];
     const texts: string[] = [];
     for (const line of block) {
       const text = typeof line === "string" ? line : line.text;
@@ -577,7 +696,7 @@ export function compileCanvas(project: Project, key: string, source: Canvas, dia
   };
 }
 
-function varLiteral(v: Variable): string {
+function varLiteral(v: Pick<Variable, "type" | "default">): string {
   switch (v.type) {
     case "bool":
       return v.default === true || v.default === "true" ? "true" : "false";

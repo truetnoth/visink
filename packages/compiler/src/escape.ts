@@ -13,7 +13,7 @@ function escapeLineStart(s: string) {
 /** Разбирает только неэкранированные {expression}; остальной текст сохраняет без изменений. */
 export function mapInkTextExpressions(
   raw: string,
-  mapExpression: (expression: string) => string | null,
+  mapExpression: (expression: string, range: { start: number; end: number }) => string | null,
   mapText: (text: string) => string = (text) => text,
 ): string {
   let out = "";
@@ -28,13 +28,15 @@ export function mapInkTextExpressions(
     }
     if (ch === "{") {
       let end = i + 1;
+      let quoted = false;
       while (end < raw.length) {
         if (raw[end] === "\\") { end += 2; continue; }
-        if (raw[end] === "}") break;
+        if (raw[end] === '"') quoted = !quoted;
+        if (!quoted && raw[end] === "}") break;
         end++;
       }
       if (end < raw.length) {
-        const mapped = mapExpression(raw.slice(i + 1, end));
+        const mapped = mapExpression(raw.slice(i + 1, end), { start: i, end: end + 1 });
         if (mapped !== null) {
           flush();
           out += mapped;

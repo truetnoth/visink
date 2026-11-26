@@ -1,7 +1,8 @@
 // мелкие поля форм свойств: текстовые поля, select, выражения ink
 import { CodeInput, Select as UiSelect } from "../ui";
 import type { Option } from "../ui";
-import type { Entity, Project } from "@visink/core";
+import type { Entity, Project, TextSpan } from "@visink/core";
+import { RichTextEditor } from "../richText";
 import { unknownIdentifiers } from "@visink/checker";
 import { usePortrait } from "../portraits";
 
@@ -37,19 +38,30 @@ export function Text({
   rows = 3,
   inputRef,
   list,
+  "aria-label": ariaLabel,
+  spans,
+  onFormat,
+  project,
+  localNames,
 }: {
   value: string;
-  onChange: (v: string) => void;
+  onChange: (v: string, spans?: TextSpan[]) => void;
   multiline?: boolean;
   mono?: boolean;
   placeholder?: string;
   rows?: number;
   inputRef?: React.Ref<HTMLTextAreaElement & HTMLInputElement>;
   list?: string;
+  "aria-label"?: string;
+  spans?: TextSpan[];
+  onFormat?: (value: string, spans: TextSpan[]) => void;
+  project?: Project;
+  localNames?: string[];
 }) {
   const cls = mono ? "mono" : "";
+  if (!mono && onFormat) return <RichTextEditor text={value} spans={spans} onSave={(next, nextSpans) => onChange(next, nextSpans)} onFormat={onFormat} project={project} localNames={localNames} className="rich-prose-input" placeholder={placeholder} ariaLabel={ariaLabel} multiline={multiline} localToolbar live />;
   return multiline ? (
-    <textarea ref={inputRef} className={cls} rows={rows} value={value} placeholder={placeholder} spellCheck={!mono} autoCapitalize={mono ? "off" : undefined} autoCorrect={mono ? "off" : undefined} onChange={(e) => onChange(e.target.value)} />
+    <textarea ref={inputRef} aria-label={ariaLabel} className={cls} rows={rows} value={value} placeholder={placeholder} spellCheck={!mono} autoCapitalize={mono ? "off" : undefined} autoCorrect={mono ? "off" : undefined} onChange={(e) => onChange(e.target.value)} />
   ) : (
     <input ref={inputRef} className={cls} value={value} placeholder={placeholder} list={list} spellCheck={!mono} autoCapitalize={mono ? "off" : undefined} autoCorrect={mono ? "off" : undefined} onChange={(e) => onChange(e.target.value)} />
   );

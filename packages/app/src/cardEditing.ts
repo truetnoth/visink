@@ -1,4 +1,29 @@
-import { flowCards, isValidInkName, syncEntries, type Project } from '@visink/core';
+import { flowCards, isValidInkName, rebaseSpans, syncEntries, withTextSpans, type Card, type Project } from '@visink/core';
+import { mapStoryText } from '@visink/compiler';
+
+export function rewriteCardExpression(
+  project: Project,
+  card: Card,
+  field: 'text' | 'menuText',
+  transform: (expression: string) => string,
+) {
+  const text = card[field];
+  if (!text) return;
+  let current = text;
+  let spans = card.formatting?.[field];
+  const updated = mapStoryText(project, text, transform, {
+    localNames: card.inputs?.map((input) => input.name),
+    onReplace: spans?.length ? ({ start, end }, replacement) => {
+      const offset = current.length - text.length;
+      const next = current.slice(0, start + offset) + replacement + current.slice(end + offset);
+      spans = rebaseSpans(spans, current, next);
+      current = next;
+    } : undefined,
+  });
+  if (updated === text) return;
+  card[field] = updated;
+  if (spans) card.formatting = withTextSpans(card.formatting, field, spans);
+}
 
 /** Keep project-local jumps valid when an additional entry is renamed or cleared. */
 export function setCardEntry(project: Project, key: string, id: string, value: string) {

@@ -48,7 +48,7 @@ export function PinEditor({ card, field, project, onCommit, onClose }: { card: C
     }
   }}>
     <div className="pin-editor-title">{title}</div>
-    <CodeInput value={value} onChange={setValue} project={project} multiline={field === "action"} rows={3} placeholder={field === "condition" ? "например: trust > 0" : "по строке, тильда не нужна"} />
+    <CodeInput value={value} onChange={setValue} project={project} extra={card.inputs?.map((input) => input.name)} multiline={field === "action"} rows={3} placeholder={field === "condition" ? "например: trust > 0" : "по строке, тильда не нужна"} />
     <div className="pin-editor-actions"><button onClick={onClose}>Отмена</button><button className="primary" onClick={() => onCommit(value)}>ОК</button></div>
   </div>;
 }

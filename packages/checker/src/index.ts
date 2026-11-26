@@ -2,7 +2,8 @@ import { qualifiedName } from "@visink/core";
 import { Compiler, CompilerOptions, JsonFileHandler } from "inkjs/full";
 import { canvasLocations, prepareProject, isBoundaryCard, type Project, type Card, type Canvas } from "@visink/core";
 import type { BuildResult, Diagnostic } from "@visink/compiler";
-import { buildProject, resolveTarget, runtimeCanvasId } from "@visink/compiler";
+import { buildProject, INK_BUILTINS, resolveTarget, runtimeCanvasId } from "@visink/compiler";
+export { INK_BUILTINS } from "@visink/compiler";
 
 export interface CheckResult {
   build: BuildResult;
@@ -124,18 +125,9 @@ export function checkProject(project: Project): CheckResult {
   return { build, diagnostics, storyJson: ink.storyJson };
 }
 
-/** Встроенные функции ink — для подсказок при вводе. */
-export const INK_BUILTINS = [
-  "RANDOM", "SEED_RANDOM", "CHOICE_COUNT", "TURNS", "TURNS_SINCE", "READ_COUNT",
-  "INT", "FLOOR", "FLOAT", "POW", "MIN", "MAX",
-  "LIST_COUNT", "LIST_MIN", "LIST_MAX", "LIST_ALL", "LIST_INVERT", "LIST_RANDOM", "LIST_VALUE", "LIST_RANGE",
-];
-
 const KNOWN = new Set([
   "and", "or", "not", "true", "false", "mod", "has", "hasnt", "if", "else", "return", "temp", "function", "DONE", "END",
-  "RANDOM", "SEED_RANDOM", "CHOICE_COUNT", "TURNS", "TURNS_SINCE", "READ_COUNT",
-  "INT", "FLOOR", "FLOAT", "POW", "MIN", "MAX",
-  "LIST_COUNT", "LIST_MIN", "LIST_MAX", "LIST_ALL", "LIST_INVERT", "LIST_RANDOM", "LIST_VALUE", "LIST_RANGE",
+  ...INK_BUILTINS,
 ]);
 
 /**

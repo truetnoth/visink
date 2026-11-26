@@ -12,6 +12,19 @@ export type CardType =
 
 export type Repeat = "once" | "sticky" | "fallback";
 export type TextStatus = "draft" | "review" | "final";
+export type TextMark = "bold" | "italic" | "underline" | "strike" | "code";
+export interface TextSpan {
+  start: number;
+  end: number;
+  marks: TextMark[];
+  size?: number;
+}
+export type TextFormatting = Record<string, TextSpan[] | undefined>;
+export interface CardInput {
+  name: string;
+  type: VarType;
+  default: number | boolean | string;
+}
 
 export interface Card {
   id: string;
@@ -32,6 +45,9 @@ export interface Card {
   status?: TextStatus;
   /** пользовательский цвет подходящих типов карточек */
   color?: string;
+  formatting?: TextFormatting;
+  /** локальные значения, сбрасываемые при каждом входе в карточку */
+  inputs?: CardInput[];
   note?: string;
   /** сохраняемое описание карточки-вложенности */
   description?: string;
@@ -59,6 +75,8 @@ export interface Link {
   condition?: string;
   /** ink-логика при переходе по стрелке, строки `~ ...` */
   action?: string;
+  /** выражения аргументов в scope источника; отсутствующие получают default */
+  args?: Record<string, string>;
 }
 
 export interface Point {
@@ -72,6 +90,7 @@ export interface Point {
 export interface Note {
   id: string;
   text: string;
+  formatting?: TextFormatting;
   color?: string;
   x: number;
   y: number;
@@ -97,6 +116,7 @@ export interface Canvas {
   folderId?: string;
   /** прежний корневой адрес для тегов строк и совместимых stitch/entry */
   legacyId?: string;
+  formatting?: TextFormatting;
   /** @deprecated источник для миграции; начало задаёт связь из карточки «Вход» */
   start?: string;
   owner?: string;
@@ -120,6 +140,7 @@ export interface Entity {
   kind: EntityKind;
   description?: string;
   name: string;
+  formatting?: TextFormatting;
   /** имя спикера в строке ink: «ДЕКАН: текст» */
   inkName: string;
   color: string;
@@ -140,6 +161,7 @@ export interface Variable {
   group?: string;
   folderId?: string;
   description?: string;
+  formatting?: TextFormatting;
   /** стабильный id сущности или набора; пусто — глобальная переменная */
   owner?: string;
 }
@@ -151,6 +173,7 @@ export interface InkListDef {
   group?: string;
   folderId?: string;
   description?: string;
+  formatting?: TextFormatting;
   owner?: string;
 }
 
@@ -163,6 +186,7 @@ export interface InkFunction {
   group?: string;
   folderId?: string;
   description?: string;
+  formatting?: TextFormatting;
   /** id персонажа; пусто — глобальная функция */
   owner?: string;
   /** функцию реализует игра (EXTERNAL); тело — запасной вариант для Inky и проверок */
@@ -173,6 +197,7 @@ export interface VariableSet {
   id: string;
   name: string;
   description?: string;
+  formatting?: TextFormatting;
 }
 
 export interface Variables {
@@ -196,6 +221,7 @@ export interface ProjectSettings {
   name: string;
   /** папка сборки относительно папки проекта */
   buildDir: string;
+  formatting?: TextFormatting;
   /** "canvas" или "canvas.entry" — куда переходит main.ink */
   start?: string;
   languages: string[];

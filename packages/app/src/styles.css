@@ -156,7 +156,7 @@ input[type="checkbox"]:focus-visible { outline: 2px solid var(--accent); outline
 .empty-state { flex: 1; display: grid; place-items: center; color: var(--muted); }
 .flow:focus { outline: none; }
 .react-flow { --xy-background-color: var(--bg); --xy-background-pattern-dots-color-default: var(--grid); --xy-background-pattern-lines-color-default: var(--grid); --xy-edge-stroke-default: var(--border-strong); --xy-selection-background-color: color-mix(in srgb, var(--selection) 12%, transparent); --xy-selection-border-default: 1px dashed var(--selection); }
-.palette { display: flex; gap: 2px; padding: 3px; background: var(--panel); border: 1px solid var(--border); border-radius: 7px; box-shadow: var(--card-shadow); }
+.palette { display: flex; align-items: center; flex-wrap: wrap; max-width: calc(100% - 30px); gap: 2px; padding: 3px; background: var(--panel); border: 1px solid var(--border); border-radius: 7px; box-shadow: var(--card-shadow); }
 .palette .icon-btn { background: none; border-color: transparent; }
 .palette .icon-btn:hover { background: var(--panel-2); border-color: var(--border); }
 .palette .toolbar-sep { align-self: center; }
@@ -327,6 +327,29 @@ button.link:hover { color: var(--text); }
 .modal p { margin: 0; line-height: 1.5; }
 .modal .keys { margin-top: 0; }
 .modal .row { margin-top: 16px; }
+
+.rich-text-field { min-width: 0; }
+.rich-text-field > [contenteditable] { white-space: pre-wrap; overflow-wrap: anywhere; }
+.rich-text-field > [contenteditable]:empty::before { content: attr(data-placeholder); color: var(--muted); pointer-events: none; }
+.rich-prose-input { min-height: 28px; padding: 5px 7px; border: 1px solid var(--border); border-radius: 5px; background: var(--panel-2); white-space: pre-wrap; overflow-wrap: anywhere; cursor: text; }
+.rich-prose-input.empty { color: var(--muted); }
+.rich-prose-input:focus { outline: 1px solid var(--accent); }
+.card-cell .rich-text-field > .card-text { flex: 1; min-height: 1.4em; width: 100%; }
+.card-top .card-cell .rich-text-field > .card-text { flex: none; }
+.rich-text-toolbar { display: flex; align-items: center; flex-wrap: wrap; gap: 2px; }
+.rich-text-toolbar .icon-btn.on { color: var(--accent); background: var(--accent-soft); }
+.rich-text-size { width: 54px; }
+.rich-text-size .select { height: 28px; padding: 3px 5px; white-space: nowrap; }
+.rich-text-quotes { font-weight: 600; }
+.rich-text-field.with-toolbar { display: grid; gap: 5px; }
+.rich-text-field.with-toolbar > .rich-text-toolbar { padding: 4px; border: 1px solid var(--border); border-radius: 6px; background: var(--panel); }
+.entity-title-rich { font-size: 20px; font-weight: 600; cursor: text; outline: none; }
+.ink-expression { padding: 0 2px; border-radius: 3px; color: var(--accent); background: var(--accent-soft); }
+.note > .rich-text-field { flex: 1; min-height: 0; display: flex; }
+.note-text.editing { outline: none; cursor: text; }
+.card-inputs { display: grid; gap: 6px; margin-bottom: 8px; }
+.card-input-row { display: grid; grid-template-columns: auto 64px minmax(0, 1fr) auto; gap: 6px; align-items: center; }
+.link-args { display: grid; gap: 8px; }
 
 /* текст карточки: правка на месте без скачков */
 .card { width: 100%; }
